@@ -1,4 +1,4 @@
-# ultragpt3
+# ultra-gpt
 
 A new Flutter project.
 
