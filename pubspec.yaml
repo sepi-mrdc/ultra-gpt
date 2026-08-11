@@ -1,0 +1,50 @@
+name: ultragpt3
+description: "A new Flutter project."
+publish_to: "none"
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.8.1
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  flutter_inappwebview: ^6.0.0
+  connectivity_plus: ^6.0.3
+  file_picker: ^8.0.0
+  flutter_native_splash: ^2.4.1
+  flutter_launcher_icons: ^0.13.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter_icons:
+  android: true
+  ios: true
+  image_path: "assets/WhatsApp Image 2025-09-17 at 07.31.07_9b3f9e1f.jpg"
+  adaptive_icon_foreground: "assets/WhatsApp Image 2025-09-17 at 07.31.07_9b3f9e1f.jpg"
+  
+
+
+flutter_native_splash:
+  color: "#010822"                  # رنگ بک‌گراند
+  image: assets/splash_logo.png     # لوگو اصلی
+  android_gravity: center           # جای‌گیری لوگو
+  ios_content_mode: scaleAspectFit  # نسبت تصویر
+  android_12:
+    image: assets/splash_logo.png
+    color: "#010822"
+    android_gravity: center
+  fullscreen: true
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/WhatsApp Image 2025-09-15 at 13.31.21_161965a7.jpg
+    - assets/app_icon.png
+    - assets/splash_logo.png
+    - assets/WhatsApp Image 2025-09-17 at 07.31.07_9b3f9e1f.jpg
