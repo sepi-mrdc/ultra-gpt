@@ -85,10 +85,23 @@ class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF3F4F6),
-      body: SafeArea(
-        child: hasInternet ? _buildWebView() : _buildNoInternetView(),
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return;
+
+        final controller = webViewController;
+        if (controller != null && await controller.canGoBack()) {
+          await controller.goBack();
+        } else {
+          SystemNavigator.pop();
+        }
+      },
+      child: Scaffold(
+        backgroundColor: const Color(0xFFF3F4F6),
+        body: SafeArea(
+          child: hasInternet ? _buildWebView() : _buildNoInternetView(),
+        ),
       ),
     );
   }
