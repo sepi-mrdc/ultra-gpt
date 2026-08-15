@@ -4,10 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
-import 'package:file_picker/file_picker.dart';
+import 'package:permission_handler/permission_handler.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await Permission.camera.request();
 
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
@@ -57,7 +58,7 @@ class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
       result,
     ) {
       setState(() {
-        hasInternet = result != ConnectivityResult.none;
+        hasInternet = !result.contains(ConnectivityResult.none);
       });
     });
   }
@@ -115,12 +116,10 @@ class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
           ),
           onWebViewCreated: (controller) {
             webViewController = controller;
-            _setupFilePickerHandler(controller);
           },
           onLoadStart: (_, __) => setState(() => isLoading = true),
-          onLoadStop: (controller, _) async {
+          onLoadStop: (_, __) {
             setState(() => isLoading = false);
-            await _injectFilePickerScript(controller);
           },
         ),
         if (isLoading)
@@ -131,37 +130,6 @@ class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
             ),
           ),
       ],
-    );
-  }
-
-  void _setupFilePickerHandler(InAppWebViewController controller) {
-    controller.addJavaScriptHandler(
-      handlerName: "pickFile",
-      callback: (args) async {
-        FilePickerResult? result = await FilePicker.platform.pickFiles();
-        if (result != null && result.files.isNotEmpty) {
-          final filePath = result.files.single.path!;
-          controller.evaluateJavascript(
-            source:
-                "window.flutterFilePicked && window.flutterFilePicked('$filePath')",
-          );
-        }
-      },
-    );
-  }
-
-  Future<void> _injectFilePickerScript(
-    InAppWebViewController controller,
-  ) async {
-    await controller.evaluateJavascript(
-      source: """
-        document.querySelectorAll('input[type=file]').forEach(function(input) {
-          input.addEventListener('click', function(e) {
-            e.preventDefault();
-            window.flutter_inappwebview.callHandler('pickFile');
-          });
-        });
-      """,
     );
   }
 
