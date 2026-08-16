@@ -5,13 +5,13 @@ import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 const Color _startupBackgroundColor = Color(0xFF010822);
 const Color _startupForegroundColor = Color(0xFFE8ECF8);
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Permission.camera.request();
 
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
@@ -45,6 +45,24 @@ class WebViewPage extends StatefulWidget {
 }
 
 enum PageLoadFailureKind { generic, network, timeout, server, ssl }
+
+enum WebPermissionFallbackAction { none, retry, settings }
+
+class WebPermissionResult {
+  const WebPermissionResult({
+    required this.granted,
+    this.fallbackAction = WebPermissionFallbackAction.none,
+    this.message,
+    this.permission,
+    this.permissionName,
+  });
+
+  final bool granted;
+  final WebPermissionFallbackAction fallbackAction;
+  final String? message;
+  final Permission? permission;
+  final String? permissionName;
+}
 
 class _WebViewPageState extends State<WebViewPage> {
   final WebUri _initialUrl = WebUri("https://app.ultragpt.pro/en/chat");
@@ -121,6 +139,11 @@ class _WebViewPageState extends State<WebViewPage> {
             databaseEnabled: true,
             cacheEnabled: true,
             cacheMode: CacheMode.LOAD_DEFAULT,
+            useShouldOverrideUrlLoading: true,
+            useOnDownloadStart: true,
+            supportMultipleWindows: true,
+            javaScriptCanOpenWindowsAutomatically: true,
+            mediaPlaybackRequiresUserGesture: false,
             supportZoom: false,
             builtInZoomControls: false,
             displayZoomControls: false,
@@ -134,6 +157,62 @@ class _WebViewPageState extends State<WebViewPage> {
           ),
           onWebViewCreated: (controller) {
             webViewController = controller;
+          },
+          shouldOverrideUrlLoading: (_, navigationAction) async {
+            final url = navigationAction.request.url;
+
+            if (url == null || _isBlankUrl(url) || _isWebUrl(url)) {
+              return NavigationActionPolicy.ALLOW;
+            }
+
+            await _openExternalUrl(url);
+            return NavigationActionPolicy.CANCEL;
+          },
+          onDownloadStartRequest: (_, downloadStartRequest) async {
+            await _openExternalUrl(downloadStartRequest.url);
+          },
+          onCreateWindow: (controller, createWindowAction) async {
+            final url = createWindowAction.request.url;
+
+            if (url == null) return false;
+
+            if (_isWebUrl(url)) {
+              await controller.loadUrl(urlRequest: URLRequest(url: url));
+            } else {
+              await _openExternalUrl(url);
+            }
+
+            return true;
+          },
+          onPermissionRequest: (_, request) async {
+            final grantedResources = <PermissionResourceType>[];
+            WebPermissionResult? blockedPermission;
+
+            for (final resource in request.resources) {
+              final result = await _requestWebPermission(resource);
+
+              if (result.granted) {
+                grantedResources.add(resource);
+              } else {
+                blockedPermission ??= result;
+              }
+            }
+
+            final canGrantAll =
+                grantedResources.length == request.resources.length;
+
+            final response = PermissionResponse(
+              resources: grantedResources,
+              action: canGrantAll
+                  ? PermissionResponseAction.GRANT
+                  : PermissionResponseAction.DENY,
+            );
+
+            if (!canGrantAll && blockedPermission != null) {
+              _showPermissionFallback(blockedPermission);
+            }
+
+            return response;
           },
           onProgressChanged: (_, progress) {
             if (pageLoadFailed) return;
@@ -235,6 +314,178 @@ class _WebViewPageState extends State<WebViewPage> {
 
   bool _isBlankUrl(WebUri? url) {
     return url?.toString() == _blankUrl.toString();
+  }
+
+  bool _isWebUrl(WebUri url) {
+    return url.scheme == "http" || url.scheme == "https";
+  }
+
+  Future<void> _openExternalUrl(WebUri url) async {
+    final uri = Uri.parse(url.toString());
+
+    try {
+      final launched = await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+      );
+      if (!launched) {
+        _showExternalOpenFailure();
+      }
+    } catch (_) {
+      _showExternalOpenFailure();
+    }
+  }
+
+  Future<WebPermissionResult> _requestWebPermission(
+    PermissionResourceType resource,
+  ) async {
+    if (resource == PermissionResourceType.CAMERA) {
+      return _requestNativePermission(
+        Permission.camera,
+        permissionName: "Camera",
+      );
+    }
+
+    if (resource == PermissionResourceType.MICROPHONE) {
+      return _requestNativePermission(
+        Permission.microphone,
+        permissionName: "Microphone",
+      );
+    }
+
+    if (resource == PermissionResourceType.CAMERA_AND_MICROPHONE) {
+      final cameraResult = await _requestNativePermission(
+        Permission.camera,
+        permissionName: "Camera",
+      );
+      if (!cameraResult.granted) return cameraResult;
+
+      final microphoneResult = await _requestNativePermission(
+        Permission.microphone,
+        permissionName: "Microphone",
+      );
+      if (!microphoneResult.granted) return microphoneResult;
+
+      return const WebPermissionResult(granted: true);
+    }
+
+    return WebPermissionResult(
+      granted: false,
+      message: "${resource.toValue()} is not supported in this app.",
+    );
+  }
+
+  Future<WebPermissionResult> _requestNativePermission(
+    Permission permission, {
+    required String permissionName,
+  }) async {
+    final currentStatus = await permission.status;
+
+    if (currentStatus.isGranted) {
+      return const WebPermissionResult(granted: true);
+    }
+
+    if (currentStatus.isPermanentlyDenied) {
+      return WebPermissionResult(
+        granted: false,
+        fallbackAction: WebPermissionFallbackAction.settings,
+        message:
+            "$permissionName permission is blocked. Enable it in App Settings.",
+        permission: permission,
+        permissionName: permissionName,
+      );
+    }
+
+    final requestedStatus = await permission.request();
+
+    if (requestedStatus.isGranted) {
+      return const WebPermissionResult(granted: true);
+    }
+
+    if (requestedStatus.isPermanentlyDenied) {
+      return WebPermissionResult(
+        granted: false,
+        fallbackAction: WebPermissionFallbackAction.settings,
+        message:
+            "$permissionName permission is blocked. Enable it in App Settings.",
+        permission: permission,
+        permissionName: permissionName,
+      );
+    }
+
+    return WebPermissionResult(
+      granted: false,
+      fallbackAction: WebPermissionFallbackAction.retry,
+      message: "$permissionName permission is needed to use Voice Stream.",
+      permission: permission,
+      permissionName: permissionName,
+    );
+  }
+
+  void _showPermissionFallback(WebPermissionResult? result) {
+    if (!mounted || result?.message == null) return;
+
+    final fallbackAction =
+        result?.fallbackAction ?? WebPermissionFallbackAction.none;
+
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(result!.message!),
+        action: fallbackAction == WebPermissionFallbackAction.settings
+            ? SnackBarAction(label: "Settings", onPressed: openAppSettings)
+            : fallbackAction == WebPermissionFallbackAction.retry
+            ? SnackBarAction(
+                label: "Try again",
+                onPressed: () => _retryPermissionRequest(result),
+              )
+            : null,
+      ),
+    );
+  }
+
+  Future<void> _retryPermissionRequest(WebPermissionResult result) async {
+    final permission = result.permission;
+    final permissionName = result.permissionName ?? "Permission";
+
+    if (permission == null) return;
+
+    final status = await permission.request();
+
+    if (!mounted) return;
+
+    if (status.isGranted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("$permissionName granted. Tap microphone again."),
+        ),
+      );
+      return;
+    }
+
+    if (status.isPermanentlyDenied) {
+      _showPermissionFallback(
+        WebPermissionResult(
+          granted: false,
+          fallbackAction: WebPermissionFallbackAction.settings,
+          message:
+              "$permissionName permission is blocked. Enable it in App Settings.",
+          permission: permission,
+          permissionName: permissionName,
+        ),
+      );
+      return;
+    }
+
+    _showPermissionFallback(result);
+  }
+
+  void _showExternalOpenFailure() {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text("No app can open this link")));
   }
 
   bool _shouldShowRetryForHttpStatus(int? statusCode) {
