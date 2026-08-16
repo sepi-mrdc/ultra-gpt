@@ -14,7 +14,7 @@ Future<void> main() async {
     const SystemUiOverlayStyle(
       statusBarColor: Color(0xFFF3F4F6),
       statusBarIconBrightness: Brightness.dark,
-      systemNavigationBarColor: Colors.transparent,
+      systemNavigationBarColor: Color(0xFFF3F4F6),
       systemNavigationBarIconBrightness: Brightness.dark,
     ),
   );
@@ -43,7 +43,7 @@ class WebViewPage extends StatefulWidget {
 
 enum PageLoadFailureKind { generic, network, timeout, server, ssl }
 
-class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
+class _WebViewPageState extends State<WebViewPage> {
   final WebUri _initialUrl = WebUri("https://app.ultragpt.pro/en/chat");
   final WebUri _blankUrl = WebUri("about:blank");
 
@@ -61,9 +61,6 @@ class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
-
-    Future.delayed(Duration.zero, _setCustomUiMode);
 
     connectivitySubscription = Connectivity().onConnectivityChanged.listen((
       results,
@@ -76,23 +73,8 @@ class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
     });
   }
 
-  void _setCustomUiMode() {
-    SystemChrome.setEnabledSystemUIMode(
-      SystemUiMode.manual,
-      overlays: [SystemUiOverlay.top],
-    );
-  }
-
-  @override
-  void didChangeMetrics() {
-    super.didChangeMetrics();
-
-    Future.delayed(const Duration(seconds: 2), _setCustomUiMode);
-  }
-
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
     connectivitySubscription.cancel();
     super.dispose();
   }
