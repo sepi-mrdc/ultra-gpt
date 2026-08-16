@@ -6,16 +6,19 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+const Color _startupBackgroundColor = Color(0xFF010822);
+const Color _startupForegroundColor = Color(0xFFE8ECF8);
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Permission.camera.request();
 
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
-      statusBarColor: Color(0xFFF3F4F6),
-      statusBarIconBrightness: Brightness.dark,
-      systemNavigationBarColor: Color(0xFFF3F4F6),
-      systemNavigationBarIconBrightness: Brightness.dark,
+      statusBarColor: _startupBackgroundColor,
+      statusBarIconBrightness: Brightness.light,
+      systemNavigationBarColor: _startupBackgroundColor,
+      systemNavigationBarIconBrightness: Brightness.light,
     ),
   );
 
@@ -94,7 +97,7 @@ class _WebViewPageState extends State<WebViewPage> {
         }
       },
       child: Scaffold(
-        backgroundColor: const Color(0xFFF3F4F6),
+        backgroundColor: _startupBackgroundColor,
         body: SafeArea(
           child: Stack(
             children: [
@@ -126,6 +129,8 @@ class _WebViewPageState extends State<WebViewPage> {
             overScrollMode: OverScrollMode.NEVER,
             safeBrowsingEnabled: true,
             disableDefaultErrorPage: true,
+            transparentBackground: true,
+            underPageBackgroundColor: _startupBackgroundColor,
           ),
           onWebViewCreated: (controller) {
             webViewController = controller;
@@ -204,17 +209,17 @@ class _WebViewPageState extends State<WebViewPage> {
         ),
         if (isInitialLoading && !pageLoadFailed)
           Container(
-            color: const Color(0xFFF3F4F6),
+            color: _startupBackgroundColor,
             child: const Center(
-              child: CircularProgressIndicator(color: Colors.blueGrey),
+              child: CircularProgressIndicator(color: _startupForegroundColor),
             ),
           ),
         if (isNavigating && !pageLoadFailed)
           LinearProgressIndicator(
             value: pageProgress > 0 ? pageProgress / 100 : null,
             minHeight: 3,
-            color: Colors.blueGrey,
-            backgroundColor: Colors.blueGrey.withValues(alpha: 0.12),
+            color: _startupForegroundColor,
+            backgroundColor: _startupForegroundColor.withValues(alpha: 0.12),
           ),
       ],
     );
@@ -333,19 +338,25 @@ class _WebViewPageState extends State<WebViewPage> {
   }
 
   Widget _buildNoInternetView() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(_failureIcon, size: 64, color: Colors.grey),
-          const SizedBox(height: 16),
-          Text(
-            _failureMessage,
-            style: TextStyle(fontSize: 18, color: Colors.grey[800]),
-          ),
-          const SizedBox(height: 20),
-          FilledButton(onPressed: _retryLoad, child: const Text("Retry")),
-        ],
+    return ColoredBox(
+      color: _startupBackgroundColor,
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(_failureIcon, size: 64, color: _startupForegroundColor),
+            const SizedBox(height: 16),
+            Text(
+              _failureMessage,
+              style: const TextStyle(
+                fontSize: 18,
+                color: _startupForegroundColor,
+              ),
+            ),
+            const SizedBox(height: 20),
+            FilledButton(onPressed: _retryLoad, child: const Text("Retry")),
+          ],
+        ),
       ),
     );
   }
