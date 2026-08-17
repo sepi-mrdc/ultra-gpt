@@ -9,6 +9,10 @@ import 'package:url_launcher/url_launcher.dart';
 
 const Color _startupBackgroundColor = Color(0xFF010822);
 const Color _startupForegroundColor = Color(0xFFE8ECF8);
+const Duration _startupRevealFadeDuration = Duration(milliseconds: 280);
+const Duration _pageReadyTimeout = Duration(seconds: 8);
+const Duration _pageReadyPollInterval = Duration(milliseconds: 180);
+const Duration _pageReadyEvaluationTimeout = Duration(milliseconds: 900);
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -69,11 +73,13 @@ class _WebViewPageState extends State<WebViewPage> {
   final WebUri _blankUrl = WebUri("about:blank");
 
   bool isInitialLoading = true;
+  bool showStartupOverlay = true;
   bool isNavigating = false;
   bool hasLoadedInitialPage = false;
   bool hasNetworkSignal = true;
   bool pageLoadFailed = false;
   int pageProgress = 0;
+  int pageLoadGeneration = 0;
   PageLoadFailureKind pageLoadFailureKind = PageLoadFailureKind.generic;
   WebUri? currentMainFrameUrl;
   late final StreamSubscription connectivitySubscription;
@@ -96,6 +102,7 @@ class _WebViewPageState extends State<WebViewPage> {
 
   @override
   void dispose() {
+    pageLoadGeneration++;
     connectivitySubscription.cancel();
     super.dispose();
   }
@@ -138,7 +145,13 @@ class _WebViewPageState extends State<WebViewPage> {
             domStorageEnabled: true,
             databaseEnabled: true,
             cacheEnabled: true,
+            clearCache: false,
             cacheMode: CacheMode.LOAD_DEFAULT,
+            javaScriptEnabled: true,
+            thirdPartyCookiesEnabled: true,
+            sharedCookiesEnabled: true,
+            loadsImagesAutomatically: true,
+            offscreenPreRaster: true,
             useShouldOverrideUrlLoading: true,
             useOnDownloadStart: true,
             supportMultipleWindows: true,
@@ -223,9 +236,12 @@ class _WebViewPageState extends State<WebViewPage> {
             });
           },
           onLoadStart: (_, url) {
+            pageLoadGeneration++;
+
             if (_isBlankUrl(url) && pageLoadFailed) {
               setState(() {
                 isInitialLoading = false;
+                showStartupOverlay = false;
                 isNavigating = false;
               });
               return;
@@ -236,27 +252,33 @@ class _WebViewPageState extends State<WebViewPage> {
                 currentMainFrameUrl = url;
               }
               isInitialLoading = !hasLoadedInitialPage;
+              showStartupOverlay = !hasLoadedInitialPage;
               isNavigating = hasLoadedInitialPage;
               pageProgress = 0;
               pageLoadFailed = false;
             });
           },
-          onLoadStop: (_, __) {
+          onLoadStop: (controller, __) {
             if (pageLoadFailed) {
               setState(() {
                 isInitialLoading = false;
+                showStartupOverlay = false;
                 isNavigating = false;
               });
               return;
             }
 
+            final loadGeneration = pageLoadGeneration;
+
             setState(() {
-              hasLoadedInitialPage = true;
-              isInitialLoading = false;
               isNavigating = false;
               pageProgress = 100;
               pageLoadFailed = false;
             });
+
+            if (!hasLoadedInitialPage) {
+              _revealInitialPageWhenReady(controller, loadGeneration);
+            }
           },
           onReceivedError: (_, request, error) {
             if (_isMainFrameLoadError(request)) {
@@ -286,12 +308,16 @@ class _WebViewPageState extends State<WebViewPage> {
             );
           },
         ),
-        if (isInitialLoading && !pageLoadFailed)
-          Container(
-            color: _startupBackgroundColor,
-            child: const Center(
-              child: CircularProgressIndicator(color: _startupForegroundColor),
-            ),
+        if (showStartupOverlay && !pageLoadFailed)
+          _StartupLoadingView(
+            visible: isInitialLoading,
+            onHidden: () {
+              if (!mounted || isInitialLoading) return;
+
+              setState(() {
+                showStartupOverlay = false;
+              });
+            },
           ),
         if (isNavigating && !pageLoadFailed)
           LinearProgressIndicator(
@@ -302,6 +328,156 @@ class _WebViewPageState extends State<WebViewPage> {
           ),
       ],
     );
+  }
+
+  Future<void> _revealInitialPageWhenReady(
+    InAppWebViewController controller,
+    int loadGeneration,
+  ) async {
+    final isReady = await _waitForVisualReadiness(controller, loadGeneration);
+
+    if (!mounted ||
+        pageLoadFailed ||
+        hasLoadedInitialPage ||
+        loadGeneration != pageLoadGeneration) {
+      return;
+    }
+
+    setState(() {
+      hasLoadedInitialPage = true;
+      isInitialLoading = false;
+      isNavigating = false;
+      pageProgress = isReady ? 100 : pageProgress;
+      pageLoadFailed = false;
+    });
+  }
+
+  Future<bool> _waitForVisualReadiness(
+    InAppWebViewController controller,
+    int loadGeneration,
+  ) async {
+    final deadline = DateTime.now().add(_pageReadyTimeout);
+    var consecutiveReadySignals = 0;
+
+    while (mounted &&
+        !pageLoadFailed &&
+        loadGeneration == pageLoadGeneration &&
+        DateTime.now().isBefore(deadline)) {
+      final isReady = await _isPageVisuallyReady(controller);
+
+      if (isReady) {
+        consecutiveReadySignals++;
+        if (consecutiveReadySignals >= 2) {
+          return true;
+        }
+      } else {
+        consecutiveReadySignals = 0;
+      }
+
+      await Future<void>.delayed(_pageReadyPollInterval);
+    }
+
+    return false;
+  }
+
+  Future<bool> _isPageVisuallyReady(InAppWebViewController controller) async {
+    try {
+      final result = await controller
+          .evaluateJavascript(
+            source: '''
+          (async function () {
+            await new Promise(function (resolve) {
+              requestAnimationFrame(function () {
+                requestAnimationFrame(resolve);
+              });
+            });
+
+            var body = document.body;
+            if (!body) return false;
+
+            var readyState = document.readyState;
+            var documentReady =
+              readyState === "interactive" || readyState === "complete";
+            if (!documentReady) return false;
+
+            var viewportWidth =
+              window.innerWidth || document.documentElement.clientWidth || 0;
+            var viewportHeight =
+              window.innerHeight || document.documentElement.clientHeight || 0;
+            if (viewportWidth <= 0 || viewportHeight <= 0) return false;
+
+            var textLength = (body.innerText || "").trim().length;
+            var meaningfulNodes = 0;
+            var interactiveNodes = 0;
+            var mediaNodes = 0;
+            var candidates = body.querySelectorAll(
+              "main, section, article, nav, header, footer, form, input, " +
+              "textarea, button, a, canvas, iframe, video, img, svg, " +
+              "[role], [contenteditable='true']"
+            );
+
+            for (var i = 0; i < candidates.length; i++) {
+              var element = candidates[i];
+              var style = window.getComputedStyle(element);
+              var rect = element.getBoundingClientRect();
+              var isVisible =
+                style.display !== "none" &&
+                style.visibility !== "hidden" &&
+                Number(style.opacity || 1) > 0.01 &&
+                rect.width >= 2 &&
+                rect.height >= 2 &&
+                rect.bottom > 0 &&
+                rect.right > 0 &&
+                rect.top < viewportHeight &&
+                rect.left < viewportWidth;
+
+              if (!isVisible) continue;
+
+              meaningfulNodes++;
+
+              var tagName = element.tagName.toLowerCase();
+              var role = (element.getAttribute("role") || "").toLowerCase();
+              if (
+                tagName === "input" ||
+                tagName === "textarea" ||
+                tagName === "button" ||
+                tagName === "a" ||
+                role === "button" ||
+                role === "textbox" ||
+                role === "link" ||
+                element.isContentEditable
+              ) {
+                interactiveNodes++;
+              }
+
+              if (
+                tagName === "canvas" ||
+                tagName === "iframe" ||
+                tagName === "video" ||
+                tagName === "img"
+              ) {
+                mediaNodes++;
+              }
+            }
+
+            var hasMeaningfulText = textLength >= 40;
+            var hasInteractiveUi = interactiveNodes >= 1 && meaningfulNodes >= 3;
+            var hasRichVisibleUi = meaningfulNodes >= 6;
+            var hasMediaUi = mediaNodes >= 1 && meaningfulNodes >= 3;
+
+            return hasMeaningfulText ||
+              hasInteractiveUi ||
+              hasRichVisibleUi ||
+              hasMediaUi;
+          })();
+        ''',
+          )
+          .timeout(_pageReadyEvaluationTimeout, onTimeout: () => false);
+
+      return result == true;
+    } catch (_) {
+      return false;
+    }
   }
 
   bool _isMainFrameLoadError(WebResourceRequest request) {
@@ -531,6 +707,7 @@ class _WebViewPageState extends State<WebViewPage> {
         currentMainFrameUrl = failedUrl;
       }
       isInitialLoading = false;
+      showStartupOverlay = false;
       isNavigating = false;
       pageProgress = 0;
       pageLoadFailed = true;
@@ -542,6 +719,7 @@ class _WebViewPageState extends State<WebViewPage> {
     setState(() {
       pageLoadFailed = false;
       isInitialLoading = !hasLoadedInitialPage;
+      showStartupOverlay = !hasLoadedInitialPage;
       isNavigating = hasLoadedInitialPage;
       pageProgress = 0;
     });
@@ -607,6 +785,38 @@ class _WebViewPageState extends State<WebViewPage> {
             const SizedBox(height: 20),
             FilledButton(onPressed: _retryLoad, child: const Text("Retry")),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _StartupLoadingView extends StatelessWidget {
+  const _StartupLoadingView({required this.visible, required this.onHidden});
+
+  final bool visible;
+  final VoidCallback onHidden;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedOpacity(
+      opacity: visible ? 1 : 0,
+      duration: _startupRevealFadeDuration,
+      curve: Curves.easeOutCubic,
+      onEnd: visible ? null : onHidden,
+      child: const ColoredBox(
+        color: _startupBackgroundColor,
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Image(
+                image: AssetImage("assets/splash_logo.png"),
+                width: 180,
+                fit: BoxFit.contain,
+              ),
+            ],
+          ),
         ),
       ),
     );

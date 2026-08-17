@@ -34,9 +34,9 @@ flutter_icons:
 
 flutter_native_splash:
   color: "#010822"                  # رنگ بک‌گراند
-  image: assets/splash_logo.png     # لوگو اصلی
-  android_gravity: center           # جای‌گیری لوگو
-  ios_content_mode: scaleAspectFit  # نسبت تصویر
+  image: assets/splash_logo.png
+  android_gravity: center
+  ios_content_mode: scaleAspectFit
   android_12:
     image: assets/splash_logo.png
     color: "#010822"
