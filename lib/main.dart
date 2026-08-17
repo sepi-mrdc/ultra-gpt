@@ -5,28 +5,96 @@ import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 const Color _startupBackgroundColor = Color(0xFF010822);
 const Color _startupForegroundColor = Color(0xFFE8ECF8);
-const Duration _startupRevealFadeDuration = Duration(milliseconds: 280);
-const Duration _pageReadyTimeout = Duration(seconds: 8);
-const Duration _pageReadyPollInterval = Duration(milliseconds: 180);
-const Duration _pageReadyEvaluationTimeout = Duration(milliseconds: 900);
+const double _splashLogoSize = 240;
+const Duration _startupRevealFadeDuration = Duration(milliseconds: 220);
+const Duration _pageReadyTimeout = Duration(seconds: 3);
+const Duration _cachedPageReadyTimeout = Duration(milliseconds: 900);
+const Duration _pageReadyPollInterval = Duration(milliseconds: 80);
+const Duration _pageReadyEvaluationTimeout = Duration(milliseconds: 250);
+const Duration _webCacheMaxAge = Duration(hours: 12);
+
+const SystemUiOverlayStyle _systemUiOverlayStyle = SystemUiOverlayStyle(
+  statusBarColor: Colors.transparent,
+  statusBarIconBrightness: Brightness.light,
+  statusBarBrightness: Brightness.dark,
+  systemStatusBarContrastEnforced: false,
+  systemNavigationBarColor: Colors.transparent,
+  systemNavigationBarIconBrightness: Brightness.light,
+  systemNavigationBarContrastEnforced: false,
+);
+
+class _WebStartupCache {
+  static const _warmKey = "web_cache_warm";
+  static const _lastNetworkRefreshKey = "web_cache_last_network_refresh_ms";
+
+  static bool warm = false;
+  static bool useCacheFirst = false;
+
+  static Future<void> restore() async {
+    final prefs = await SharedPreferences.getInstance();
+    warm = prefs.getBool(_warmKey) ?? false;
+    final lastRefreshMs = prefs.getInt(_lastNetworkRefreshKey);
+    final lastRefresh = lastRefreshMs == null
+        ? null
+        : DateTime.fromMillisecondsSinceEpoch(lastRefreshMs);
+    final isFresh =
+        lastRefresh != null && DateTime.now().difference(lastRefresh) < _webCacheMaxAge;
+    useCacheFirst = warm && isFresh;
+  }
+
+  static Future<void> markReady({required bool loadedFromCache}) async {
+    warm = true;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_warmKey, true);
+    if (!loadedFromCache) {
+      await prefs.setInt(
+        _lastNetworkRefreshKey,
+        DateTime.now().millisecondsSinceEpoch,
+      );
+    }
+  }
+}
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  SystemChrome.setSystemUIOverlayStyle(
-    const SystemUiOverlayStyle(
-      statusBarColor: _startupBackgroundColor,
-      statusBarIconBrightness: Brightness.light,
-      systemNavigationBarColor: _startupBackgroundColor,
-      systemNavigationBarIconBrightness: Brightness.light,
-    ),
-  );
+  await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  SystemChrome.setSystemUIOverlayStyle(_systemUiOverlayStyle);
+  await _WebStartupCache.restore();
+  await _configureWebViewCaching();
 
   runApp(const MyApp());
+}
+
+Future<void> _configureWebViewCaching() async {
+  try {
+    if (!await WebViewFeature.isFeatureSupported(
+      WebViewFeature.SERVICE_WORKER_BASIC_USAGE,
+    )) {
+      return;
+    }
+
+    await ServiceWorkerController.instance().setServiceWorkerClient(
+      ServiceWorkerClient(shouldInterceptRequest: (_) async => null),
+    );
+
+    if (await WebViewFeature.isFeatureSupported(
+      WebViewFeature.SERVICE_WORKER_CACHE_MODE,
+    )) {
+      await ServiceWorkerController.setCacheMode(
+        _WebStartupCache.useCacheFirst
+            ? CacheMode.LOAD_CACHE_ELSE_NETWORK
+            : CacheMode.LOAD_DEFAULT,
+      );
+    }
+  } catch (_) {
+    // Service worker cache tuning is best-effort and should not block startup.
+  }
 }
 
 class MyApp extends StatelessWidget {
@@ -34,9 +102,17 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const MaterialApp(
+    return MaterialApp(
       debugShowCheckedModeBanner: false,
-      home: WebViewPage(),
+      theme: ThemeData(
+        brightness: Brightness.dark,
+        scaffoldBackgroundColor: _startupBackgroundColor,
+        colorScheme: const ColorScheme.dark(
+          surface: _startupBackgroundColor,
+          primary: _startupForegroundColor,
+        ),
+      ),
+      home: const WebViewPage(),
     );
   }
 }
@@ -80,6 +156,7 @@ class _WebViewPageState extends State<WebViewPage> {
   bool pageLoadFailed = false;
   int pageProgress = 0;
   int pageLoadGeneration = 0;
+  bool _isWaitingForReveal = false;
   PageLoadFailureKind pageLoadFailureKind = PageLoadFailureKind.generic;
   WebUri? currentMainFrameUrl;
   late final StreamSubscription connectivitySubscription;
@@ -109,27 +186,30 @@ class _WebViewPageState extends State<WebViewPage> {
 
   @override
   Widget build(BuildContext context) {
-    return PopScope(
-      canPop: false,
-      onPopInvokedWithResult: (didPop, result) async {
-        if (didPop) return;
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: _systemUiOverlayStyle,
+      child: PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, result) async {
+          if (didPop) return;
 
-        final controller = webViewController;
-        if (controller != null && await controller.canGoBack()) {
-          await controller.goBack();
-        } else {
-          SystemNavigator.pop();
-        }
-      },
-      child: Scaffold(
-        backgroundColor: _startupBackgroundColor,
-        body: SafeArea(
-          child: Stack(
-            children: [
-              _buildWebView(),
-              if (pageLoadFailed)
-                Positioned.fill(child: _buildNoInternetView()),
-            ],
+          final controller = webViewController;
+          if (controller != null && await controller.canGoBack()) {
+            await controller.goBack();
+          } else {
+            SystemNavigator.pop();
+          }
+        },
+        child: Scaffold(
+          backgroundColor: _startupBackgroundColor,
+          body: SafeArea(
+            child: Stack(
+              children: [
+                _buildWebView(),
+                if (pageLoadFailed)
+                  Positioned.fill(child: _buildNoInternetView()),
+              ],
+            ),
           ),
         ),
       ),
@@ -146,7 +226,9 @@ class _WebViewPageState extends State<WebViewPage> {
             databaseEnabled: true,
             cacheEnabled: true,
             clearCache: false,
-            cacheMode: CacheMode.LOAD_DEFAULT,
+            cacheMode: _WebStartupCache.useCacheFirst
+                ? CacheMode.LOAD_CACHE_ELSE_NETWORK
+                : CacheMode.LOAD_DEFAULT,
             javaScriptEnabled: true,
             thirdPartyCookiesEnabled: true,
             sharedCookiesEnabled: true,
@@ -227,16 +309,21 @@ class _WebViewPageState extends State<WebViewPage> {
 
             return response;
           },
-          onProgressChanged: (_, progress) {
+          onProgressChanged: (controller, progress) {
             if (pageLoadFailed) return;
 
             setState(() {
               pageProgress = progress;
               isNavigating = !isInitialLoading && progress < 100;
             });
+
+            if (!hasLoadedInitialPage && progress >= 85) {
+              _revealInitialPageWhenReady(controller, pageLoadGeneration);
+            }
           },
           onLoadStart: (_, url) {
             pageLoadGeneration++;
+            _isWaitingForReveal = false;
 
             if (_isBlankUrl(url) && pageLoadFailed) {
               setState(() {
@@ -334,44 +421,60 @@ class _WebViewPageState extends State<WebViewPage> {
     InAppWebViewController controller,
     int loadGeneration,
   ) async {
-    final isReady = await _waitForVisualReadiness(controller, loadGeneration);
-
-    if (!mounted ||
-        pageLoadFailed ||
+    if (_isWaitingForReveal ||
         hasLoadedInitialPage ||
+        pageLoadFailed ||
+        !mounted ||
         loadGeneration != pageLoadGeneration) {
       return;
     }
 
-    setState(() {
-      hasLoadedInitialPage = true;
-      isInitialLoading = false;
-      isNavigating = false;
-      pageProgress = isReady ? 100 : pageProgress;
-      pageLoadFailed = false;
-    });
+    _isWaitingForReveal = true;
+    try {
+      final isReady = await _waitForVisualReadiness(controller, loadGeneration);
+
+      if (!mounted ||
+          pageLoadFailed ||
+          hasLoadedInitialPage ||
+          loadGeneration != pageLoadGeneration) {
+        return;
+      }
+
+      setState(() {
+        hasLoadedInitialPage = true;
+        isInitialLoading = false;
+        isNavigating = false;
+        pageProgress = isReady ? 100 : pageProgress;
+        pageLoadFailed = false;
+      });
+      unawaited(
+        _WebStartupCache.markReady(
+          loadedFromCache: _WebStartupCache.useCacheFirst,
+        ),
+      );
+    } finally {
+      if (loadGeneration == pageLoadGeneration) {
+        _isWaitingForReveal = false;
+      }
+    }
   }
 
   Future<bool> _waitForVisualReadiness(
     InAppWebViewController controller,
     int loadGeneration,
   ) async {
-    final deadline = DateTime.now().add(_pageReadyTimeout);
-    var consecutiveReadySignals = 0;
+    final deadline = DateTime.now().add(
+      _WebStartupCache.useCacheFirst
+          ? _cachedPageReadyTimeout
+          : _pageReadyTimeout,
+    );
 
     while (mounted &&
         !pageLoadFailed &&
         loadGeneration == pageLoadGeneration &&
         DateTime.now().isBefore(deadline)) {
-      final isReady = await _isPageVisuallyReady(controller);
-
-      if (isReady) {
-        consecutiveReadySignals++;
-        if (consecutiveReadySignals >= 2) {
-          return true;
-        }
-      } else {
-        consecutiveReadySignals = 0;
+      if (await _isPageVisuallyReady(controller)) {
+        return true;
       }
 
       await Future<void>.delayed(_pageReadyPollInterval);
@@ -385,96 +488,37 @@ class _WebViewPageState extends State<WebViewPage> {
       final result = await controller
           .evaluateJavascript(
             source: '''
-          (async function () {
-            await new Promise(function (resolve) {
-              requestAnimationFrame(function () {
-                requestAnimationFrame(resolve);
-              });
-            });
-
+          (function () {
             var body = document.body;
             if (!body) return false;
 
             var readyState = document.readyState;
-            var documentReady =
-              readyState === "interactive" || readyState === "complete";
-            if (!documentReady) return false;
-
-            var viewportWidth =
-              window.innerWidth || document.documentElement.clientWidth || 0;
-            var viewportHeight =
-              window.innerHeight || document.documentElement.clientHeight || 0;
-            if (viewportWidth <= 0 || viewportHeight <= 0) return false;
-
-            var textLength = (body.innerText || "").trim().length;
-            var meaningfulNodes = 0;
-            var interactiveNodes = 0;
-            var mediaNodes = 0;
-            var candidates = body.querySelectorAll(
-              "main, section, article, nav, header, footer, form, input, " +
-              "textarea, button, a, canvas, iframe, video, img, svg, " +
-              "[role], [contenteditable='true']"
-            );
-
-            for (var i = 0; i < candidates.length; i++) {
-              var element = candidates[i];
-              var style = window.getComputedStyle(element);
-              var rect = element.getBoundingClientRect();
-              var isVisible =
-                style.display !== "none" &&
-                style.visibility !== "hidden" &&
-                Number(style.opacity || 1) > 0.01 &&
-                rect.width >= 2 &&
-                rect.height >= 2 &&
-                rect.bottom > 0 &&
-                rect.right > 0 &&
-                rect.top < viewportHeight &&
-                rect.left < viewportWidth;
-
-              if (!isVisible) continue;
-
-              meaningfulNodes++;
-
-              var tagName = element.tagName.toLowerCase();
-              var role = (element.getAttribute("role") || "").toLowerCase();
-              if (
-                tagName === "input" ||
-                tagName === "textarea" ||
-                tagName === "button" ||
-                tagName === "a" ||
-                role === "button" ||
-                role === "textbox" ||
-                role === "link" ||
-                element.isContentEditable
-              ) {
-                interactiveNodes++;
-              }
-
-              if (
-                tagName === "canvas" ||
-                tagName === "iframe" ||
-                tagName === "video" ||
-                tagName === "img"
-              ) {
-                mediaNodes++;
-              }
+            if (readyState !== "interactive" && readyState !== "complete") {
+              return false;
             }
 
-            var hasMeaningfulText = textLength >= 40;
-            var hasInteractiveUi = interactiveNodes >= 1 && meaningfulNodes >= 3;
-            var hasRichVisibleUi = meaningfulNodes >= 6;
-            var hasMediaUi = mediaNodes >= 1 && meaningfulNodes >= 3;
+            var root =
+              document.getElementById("__nuxt") ||
+              document.getElementById("app") ||
+              document.getElementById("root") ||
+              document.querySelector("[data-server-rendered]");
 
-            return hasMeaningfulText ||
-              hasInteractiveUi ||
-              hasRichVisibleUi ||
-              hasMediaUi;
+            if (
+              root &&
+              (root.childElementCount > 0 ||
+                (root.innerText || "").trim().length > 0)
+            ) {
+              return true;
+            }
+
+            if (body.childElementCount > 1) return true;
+            return (body.innerText || "").trim().length >= 16;
           })();
         ''',
           )
           .timeout(_pageReadyEvaluationTimeout, onTimeout: () => false);
 
-      return result == true;
+      return result == true || result == 1 || result == "true";
     } catch (_) {
       return false;
     }
@@ -712,6 +756,7 @@ class _WebViewPageState extends State<WebViewPage> {
       pageProgress = 0;
       pageLoadFailed = true;
       pageLoadFailureKind = kind;
+      _isWaitingForReveal = false;
     });
   }
 
@@ -726,6 +771,9 @@ class _WebViewPageState extends State<WebViewPage> {
 
     final controller = webViewController;
     if (controller != null) {
+      await controller.setSettings(
+        settings: InAppWebViewSettings(cacheMode: CacheMode.LOAD_DEFAULT),
+      );
       await controller.loadUrl(
         urlRequest: URLRequest(url: currentMainFrameUrl ?? _initialUrl),
       );
@@ -807,15 +855,13 @@ class _StartupLoadingView extends StatelessWidget {
       child: const ColoredBox(
         color: _startupBackgroundColor,
         child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Image(
-                image: AssetImage("assets/splash_logo.png"),
-                width: 180,
-                fit: BoxFit.contain,
-              ),
-            ],
+          child: ClipOval(
+            child: Image(
+              image: AssetImage("assets/splash_logo.png"),
+              width: _splashLogoSize,
+              height: _splashLogoSize,
+              fit: BoxFit.cover,
+            ),
           ),
         ),
       ),

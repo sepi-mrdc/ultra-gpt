@@ -18,6 +18,7 @@ dependencies:
   flutter_launcher_icons: ^0.13.1
   url_launcher: ^6.3.2
   url_launcher_android: 6.3.24
+  shared_preferences: ^2.5.3
 
 dev_dependencies:
   flutter_test:
@@ -33,15 +34,14 @@ flutter_icons:
 
 
 flutter_native_splash:
-  color: "#010822"                  # رنگ بک‌گراند
-  image: assets/splash_logo.png
+  color: "#010822"
   android_gravity: center
   ios_content_mode: scaleAspectFit
   android_12:
-    image: assets/splash_logo.png
     color: "#010822"
-    android_gravity: center
-  fullscreen: true
+    image: assets/transparent_splash.png
+    icon_background_color: "#010822"
+  fullscreen: false
 
 flutter:
   uses-material-design: true
