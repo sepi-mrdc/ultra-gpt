@@ -1,0 +1,104 @@
+import "package:flutter_test/flutter_test.dart";
+import "package:ultragpt3/app_urls.dart";
+import "package:ultragpt3/web_share_bridge.dart";
+
+void main() {
+  group("UltraGptUrls", () {
+    test("treats localized and bare share paths as share links", () {
+      expect(
+        UltraGptUrls.isShareHttpUrl(Uri.parse("https://app.ultragpt.pro/en/share/abc")),
+        isTrue,
+      );
+      expect(
+        UltraGptUrls.isShareHttpUrl(Uri.parse("https://app.ultragpt.pro/ru/share/abc")),
+        isTrue,
+      );
+      expect(
+        UltraGptUrls.isShareHttpUrl(Uri.parse("https://app.ultragpt.pro/share/abc")),
+        isTrue,
+      );
+      expect(
+        UltraGptUrls.isShareHttpUrl(Uri.parse("https://app.ultragpt.pro/en/chat")),
+        isFalse,
+      );
+      expect(
+        UltraGptUrls.isShareHttpUrl(
+          Uri.parse("https://staging-app.ultragpt.pro/share/abc"),
+        ),
+        isTrue,
+      );
+    });
+
+    test("maps https share links to a public https URL", () {
+      final resolved = UltraGptUrls.resolveIncomingShare(
+        Uri.parse("http://app.ultragpt.pro/en/share/test"),
+      );
+
+      expect(resolved?.toString(), "https://app.ultragpt.pro/en/share/test");
+
+      expect(
+        UltraGptUrls.resolveIncomingShare(
+          Uri.parse("https://staging-app.ultragpt.pro/share/abc-123"),
+        )?.toString(),
+        "https://staging-app.ultragpt.pro/share/abc-123",
+      );
+    });
+
+    test("maps custom-scheme share links to the public share page", () {
+      expect(
+        UltraGptUrls.resolveIncomingShare(Uri.parse("ultragpt://share/abc-123"))?.toString(),
+        "https://app.ultragpt.pro/en/share/abc-123",
+      );
+      expect(
+        UltraGptUrls.resolveIncomingShare(Uri.parse("ultragpt:///share/abc-123"))?.toString(),
+        "https://app.ultragpt.pro/en/share/abc-123",
+      );
+      expect(
+        UltraGptUrls.resolveIncomingShare(Uri.parse("ultragpt://share?token=abc-123"))
+            ?.toString(),
+        "https://app.ultragpt.pro/en/share/abc-123",
+      );
+      expect(
+        UltraGptUrls.resolveIncomingShare(Uri.parse("ultragpt://open?token=abc-123")),
+        isNull,
+      );
+    });
+
+    test("starts on chat unless the incoming link is a share URL", () {
+      expect(
+        UltraGptUrls.startUri().toString(),
+        UltraGptUrls.defaultChatUrl,
+      );
+      expect(
+        UltraGptUrls.startUri(incoming: Uri.parse("https://example.com")).toString(),
+        UltraGptUrls.defaultChatUrl,
+      );
+      expect(
+        UltraGptUrls.startUri(
+          incoming: Uri.parse("https://app.ultragpt.pro/en/share/ready"),
+        ).toString(),
+        "https://app.ultragpt.pro/en/share/ready",
+      );
+      expect(
+        UltraGptUrls.startUri(
+          incoming: Uri.parse("https://staging-app.ultragpt.pro/share/ready"),
+        ).toString(),
+        "https://staging-app.ultragpt.pro/share/ready",
+      );
+    });
+  });
+
+  group("shareTextFromWebPayload", () {
+    test("joins title, text, and url without duplicating the same value", () {
+      expect(
+        shareTextFromWebPayload({
+          "title": "My chat",
+          "text": "My chat",
+          "url": "https://app.ultragpt.pro/en/share/abc",
+        }),
+        "My chat\nhttps://app.ultragpt.pro/en/share/abc",
+      );
+      expect(shareTextFromWebPayload({"url": "  "}), isNull);
+    });
+  });
+}

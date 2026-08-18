@@ -7,6 +7,10 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:app_links/app_links.dart';
+
+import 'app_urls.dart';
+import 'web_share_bridge.dart';
 
 const Color _startupBackgroundColor = Color(0xFF010822);
 const Color _startupForegroundColor = Color(0xFFE8ECF8);
@@ -68,7 +72,14 @@ Future<void> main() async {
   await _WebStartupCache.restore();
   await _configureWebViewCaching();
 
-  runApp(const MyApp());
+  Uri? launchLink;
+  try {
+    launchLink = await AppLinks().getInitialLink();
+  } catch (_) {
+    launchLink = null;
+  }
+
+  runApp(MyApp(initialUrl: WebUri(UltraGptUrls.startUri(incoming: launchLink).toString())));
 }
 
 Future<void> _configureWebViewCaching() async {
@@ -98,7 +109,9 @@ Future<void> _configureWebViewCaching() async {
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+  const MyApp({super.key, this.initialUrl});
+
+  final WebUri? initialUrl;
 
   @override
   Widget build(BuildContext context) {
@@ -112,13 +125,15 @@ class MyApp extends StatelessWidget {
           primary: _startupForegroundColor,
         ),
       ),
-      home: const WebViewPage(),
+      home: WebViewPage(initialUrl: initialUrl),
     );
   }
 }
 
 class WebViewPage extends StatefulWidget {
-  const WebViewPage({super.key});
+  const WebViewPage({super.key, this.initialUrl});
+
+  final WebUri? initialUrl;
 
   @override
   State<WebViewPage> createState() => _WebViewPageState();
@@ -145,8 +160,9 @@ class WebPermissionResult {
 }
 
 class _WebViewPageState extends State<WebViewPage> {
-  final WebUri _initialUrl = WebUri("https://app.ultragpt.pro/en/chat");
+  late final WebUri _initialUrl;
   final WebUri _blankUrl = WebUri("about:blank");
+  final AppLinks _appLinks = AppLinks();
 
   bool isInitialLoading = true;
   bool showStartupOverlay = true;
@@ -160,11 +176,16 @@ class _WebViewPageState extends State<WebViewPage> {
   PageLoadFailureKind pageLoadFailureKind = PageLoadFailureKind.generic;
   WebUri? currentMainFrameUrl;
   late final StreamSubscription connectivitySubscription;
+  StreamSubscription<Uri>? appLinkSubscription;
   InAppWebViewController? webViewController;
 
   @override
   void initState() {
     super.initState();
+
+    _initialUrl =
+        widget.initialUrl ?? WebUri(UltraGptUrls.defaultChatUrl);
+    currentMainFrameUrl = _initialUrl;
 
     connectivitySubscription = Connectivity().onConnectivityChanged.listen((
       results,
@@ -175,13 +196,41 @@ class _WebViewPageState extends State<WebViewPage> {
         hasNetworkSignal = !results.contains(ConnectivityResult.none);
       });
     });
+
+    appLinkSubscription = _appLinks.uriLinkStream.listen(_onIncomingAppLink);
   }
 
   @override
   void dispose() {
     pageLoadGeneration++;
     connectivitySubscription.cancel();
+    appLinkSubscription?.cancel();
     super.dispose();
+  }
+
+  void _onIncomingAppLink(Uri uri) {
+    final resolved = UltraGptUrls.resolveIncomingShare(uri);
+    if (resolved == null) return;
+
+    final nextUrl = WebUri(resolved.toString());
+    if (nextUrl.toString() == currentMainFrameUrl?.toString() ||
+        (nextUrl.toString() == _initialUrl.toString() && !hasLoadedInitialPage)) {
+      return;
+    }
+
+    final controller = webViewController;
+    currentMainFrameUrl = nextUrl;
+    if (controller == null) return;
+
+    unawaited(controller.loadUrl(urlRequest: URLRequest(url: nextUrl)));
+  }
+
+  Future<void> _installShareBridge(InAppWebViewController controller) async {
+    try {
+      await controller.evaluateJavascript(source: shareBridgeJavaScript);
+    } catch (_) {
+      // The share polyfill is best-effort and should not block page load.
+    }
   }
 
   @override
@@ -252,6 +301,27 @@ class _WebViewPageState extends State<WebViewPage> {
           ),
           onWebViewCreated: (controller) {
             webViewController = controller;
+            try {
+              controller.addJavaScriptHandler(
+                handlerName: shareConversationHandlerName,
+                callback: (args) async {
+                  await shareConversationFromWeb(
+                    args.isEmpty ? null : args.first,
+                  );
+                  return true;
+                },
+              );
+            } catch (_) {
+              // Handler may already exist if the WebView is recreated.
+            }
+
+            final pendingShareUrl = currentMainFrameUrl;
+            if (pendingShareUrl != null &&
+                pendingShareUrl.toString() != _initialUrl.toString()) {
+              unawaited(
+                controller.loadUrl(urlRequest: URLRequest(url: pendingShareUrl)),
+              );
+            }
           },
           shouldOverrideUrlLoading: (_, navigationAction) async {
             final url = navigationAction.request.url;
@@ -346,6 +416,8 @@ class _WebViewPageState extends State<WebViewPage> {
             });
           },
           onLoadStop: (controller, __) {
+            unawaited(_installShareBridge(controller));
+
             if (pageLoadFailed) {
               setState(() {
                 isInitialLoading = false;
