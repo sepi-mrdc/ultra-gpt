@@ -5,7 +5,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:app_links/app_links.dart';
 
@@ -17,10 +16,8 @@ const Color _startupForegroundColor = Color(0xFFE8ECF8);
 const double _splashLogoSize = 240;
 const Duration _startupRevealFadeDuration = Duration(milliseconds: 220);
 const Duration _pageReadyTimeout = Duration(seconds: 3);
-const Duration _cachedPageReadyTimeout = Duration(milliseconds: 900);
 const Duration _pageReadyPollInterval = Duration(milliseconds: 80);
 const Duration _pageReadyEvaluationTimeout = Duration(milliseconds: 250);
-const Duration _webCacheMaxAge = Duration(hours: 12);
 
 const SystemUiOverlayStyle _systemUiOverlayStyle = SystemUiOverlayStyle(
   statusBarColor: Colors.transparent,
@@ -32,45 +29,11 @@ const SystemUiOverlayStyle _systemUiOverlayStyle = SystemUiOverlayStyle(
   systemNavigationBarContrastEnforced: false,
 );
 
-class _WebStartupCache {
-  static const _warmKey = "web_cache_warm";
-  static const _lastNetworkRefreshKey = "web_cache_last_network_refresh_ms";
-
-  static bool warm = false;
-  static bool useCacheFirst = false;
-
-  static Future<void> restore() async {
-    final prefs = await SharedPreferences.getInstance();
-    warm = prefs.getBool(_warmKey) ?? false;
-    final lastRefreshMs = prefs.getInt(_lastNetworkRefreshKey);
-    final lastRefresh = lastRefreshMs == null
-        ? null
-        : DateTime.fromMillisecondsSinceEpoch(lastRefreshMs);
-    final isFresh =
-        lastRefresh != null && DateTime.now().difference(lastRefresh) < _webCacheMaxAge;
-    useCacheFirst = warm && isFresh;
-  }
-
-  static Future<void> markReady({required bool loadedFromCache}) async {
-    warm = true;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_warmKey, true);
-    if (!loadedFromCache) {
-      await prefs.setInt(
-        _lastNetworkRefreshKey,
-        DateTime.now().millisecondsSinceEpoch,
-      );
-    }
-  }
-}
-
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   SystemChrome.setSystemUIOverlayStyle(_systemUiOverlayStyle);
-  await _WebStartupCache.restore();
-  await _configureWebViewCaching();
 
   Uri? launchLink;
   try {
@@ -79,33 +42,13 @@ Future<void> main() async {
     launchLink = null;
   }
 
-  runApp(MyApp(initialUrl: WebUri(UltraGptUrls.startUri(incoming: launchLink).toString())));
-}
-
-Future<void> _configureWebViewCaching() async {
-  try {
-    if (!await WebViewFeature.isFeatureSupported(
-      WebViewFeature.SERVICE_WORKER_BASIC_USAGE,
-    )) {
-      return;
-    }
-
-    await ServiceWorkerController.instance().setServiceWorkerClient(
-      ServiceWorkerClient(shouldInterceptRequest: (_) async => null),
-    );
-
-    if (await WebViewFeature.isFeatureSupported(
-      WebViewFeature.SERVICE_WORKER_CACHE_MODE,
-    )) {
-      await ServiceWorkerController.setCacheMode(
-        _WebStartupCache.useCacheFirst
-            ? CacheMode.LOAD_CACHE_ELSE_NETWORK
-            : CacheMode.LOAD_DEFAULT,
-      );
-    }
-  } catch (_) {
-    // Service worker cache tuning is best-effort and should not block startup.
-  }
+  runApp(
+    MyApp(
+      initialUrl: WebUri(
+        UltraGptUrls.startUri(incoming: launchLink).toString(),
+      ),
+    ),
+  );
 }
 
 class MyApp extends StatelessWidget {
@@ -183,8 +126,7 @@ class _WebViewPageState extends State<WebViewPage> {
   void initState() {
     super.initState();
 
-    _initialUrl =
-        widget.initialUrl ?? WebUri(UltraGptUrls.defaultChatUrl);
+    _initialUrl = widget.initialUrl ?? WebUri(UltraGptUrls.defaultChatUrl);
     currentMainFrameUrl = _initialUrl;
 
     connectivitySubscription = Connectivity().onConnectivityChanged.listen((
@@ -214,7 +156,8 @@ class _WebViewPageState extends State<WebViewPage> {
 
     final nextUrl = WebUri(resolved.toString());
     if (nextUrl.toString() == currentMainFrameUrl?.toString() ||
-        (nextUrl.toString() == _initialUrl.toString() && !hasLoadedInitialPage)) {
+        (nextUrl.toString() == _initialUrl.toString() &&
+            !hasLoadedInitialPage)) {
       return;
     }
 
@@ -251,7 +194,9 @@ class _WebViewPageState extends State<WebViewPage> {
         },
         child: Scaffold(
           backgroundColor: _startupBackgroundColor,
+          resizeToAvoidBottomInset: true,
           body: SafeArea(
+            bottom: false,
             child: Stack(
               children: [
                 _buildWebView(),
@@ -275,9 +220,7 @@ class _WebViewPageState extends State<WebViewPage> {
             databaseEnabled: true,
             cacheEnabled: true,
             clearCache: false,
-            cacheMode: _WebStartupCache.useCacheFirst
-                ? CacheMode.LOAD_CACHE_ELSE_NETWORK
-                : CacheMode.LOAD_DEFAULT,
+            cacheMode: CacheMode.LOAD_DEFAULT,
             javaScriptEnabled: true,
             thirdPartyCookiesEnabled: true,
             sharedCookiesEnabled: true,
@@ -296,7 +239,7 @@ class _WebViewPageState extends State<WebViewPage> {
             overScrollMode: OverScrollMode.NEVER,
             safeBrowsingEnabled: true,
             disableDefaultErrorPage: true,
-            transparentBackground: true,
+            transparentBackground: false,
             underPageBackgroundColor: _startupBackgroundColor,
           ),
           onWebViewCreated: (controller) {
@@ -319,7 +262,9 @@ class _WebViewPageState extends State<WebViewPage> {
             if (pendingShareUrl != null &&
                 pendingShareUrl.toString() != _initialUrl.toString()) {
               unawaited(
-                controller.loadUrl(urlRequest: URLRequest(url: pendingShareUrl)),
+                controller.loadUrl(
+                  urlRequest: URLRequest(url: pendingShareUrl),
+                ),
               );
             }
           },
@@ -439,6 +384,11 @@ class _WebViewPageState extends State<WebViewPage> {
               _revealInitialPageWhenReady(controller, loadGeneration);
             }
           },
+          onPageCommitVisible: (controller, _) {
+            if (!hasLoadedInitialPage) {
+              _revealInitialPageWhenReady(controller, pageLoadGeneration);
+            }
+          },
           onReceivedError: (_, request, error) {
             if (_isMainFrameLoadError(request)) {
               _showLoadFailure(
@@ -519,11 +469,6 @@ class _WebViewPageState extends State<WebViewPage> {
         pageProgress = isReady ? 100 : pageProgress;
         pageLoadFailed = false;
       });
-      unawaited(
-        _WebStartupCache.markReady(
-          loadedFromCache: _WebStartupCache.useCacheFirst,
-        ),
-      );
     } finally {
       if (loadGeneration == pageLoadGeneration) {
         _isWaitingForReveal = false;
@@ -535,11 +480,7 @@ class _WebViewPageState extends State<WebViewPage> {
     InAppWebViewController controller,
     int loadGeneration,
   ) async {
-    final deadline = DateTime.now().add(
-      _WebStartupCache.useCacheFirst
-          ? _cachedPageReadyTimeout
-          : _pageReadyTimeout,
-    );
+    final deadline = DateTime.now().add(_pageReadyTimeout);
 
     while (mounted &&
         !pageLoadFailed &&
