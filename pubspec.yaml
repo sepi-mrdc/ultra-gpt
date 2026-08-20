@@ -21,6 +21,7 @@ dependencies:
   app_links: ^6.4.1
   share_plus: ^10.1.4
   google_sign_in: ^6.2.2
+  http: ^1.6.0
 
 dev_dependencies:
   flutter_test:

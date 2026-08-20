@@ -43,6 +43,8 @@ Future<void> main() async {
     launchLink = null;
   }
 
+  unawaited(UltraGptGoogleAuth().warmUp());
+
   runApp(
     MyApp(
       initialUrl: WebUri(
@@ -143,6 +145,8 @@ class _WebViewPageState extends State<WebViewPage> {
     });
 
     appLinkSubscription = _appLinks.uriLinkStream.listen(_onIncomingAppLink);
+
+    unawaited(_googleAuth.warmUp());
   }
 
   @override
@@ -583,12 +587,27 @@ class _WebViewPageState extends State<WebViewPage> {
     });
 
     try {
-      final callbackUri = await _googleAuth.signInAndBuildApiCallbackUri();
+      final locale =
+          UltraGptUrls.localeFromAppUrl(
+            Uri.parse(currentMainFrameUrl?.toString() ?? _initialUrl.toString()),
+          ) ??
+          "en";
+
+      final callbackUri = await _googleAuth.signInAndResolveAppCallbackUri(
+        locale: locale,
+      );
       if (!mounted || callbackUri == null) return;
 
       currentMainFrameUrl = WebUri(callbackUri.toString());
       await controller.loadUrl(
         urlRequest: URLRequest(url: currentMainFrameUrl),
+      );
+    } on GoogleAuthException catch (error) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).clearSnackBars();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.message)),
       );
     } catch (_) {
       if (!mounted) return;
