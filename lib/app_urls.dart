@@ -21,13 +21,19 @@ class UltraGptUrls {
     return isSharePath(uri.path);
   }
 
+  static bool isAppHttpUrl(Uri uri) {
+    if (uri.scheme != "http" && uri.scheme != "https") return false;
+    return shareHosts.contains(uri.host.toLowerCase());
+  }
+
   static String? shareTokenFromCustomScheme(Uri uri) {
     if (uri.scheme != customScheme) return null;
 
     final queryToken = uri.queryParameters["token"]?.trim();
     final hasShareHost = uri.host.toLowerCase() == "share";
     final hasSharePath =
-        uri.pathSegments.isNotEmpty && uri.pathSegments.first.toLowerCase() == "share";
+        uri.pathSegments.isNotEmpty &&
+        uri.pathSegments.first.toLowerCase() == "share";
 
     if (hasShareHost) {
       final token = uri.pathSegments.where((part) => part.isNotEmpty).join("/");
@@ -49,7 +55,10 @@ class UltraGptUrls {
     return null;
   }
 
-  static Uri publicShareUri(String token, {String locale = _defaultShareLocale}) {
+  static Uri publicShareUri(
+    String token, {
+    String locale = _defaultShareLocale,
+  }) {
     return Uri(
       scheme: "https",
       host: host,
@@ -69,8 +78,18 @@ class UltraGptUrls {
     return publicShareUri(token);
   }
 
+  /// Maps incoming OS links back to UltraGPT pages. This includes OAuth
+  /// callback URLs opened after Google auth runs in the system browser.
+  static Uri? resolveIncomingAppUrl(Uri uri) {
+    if (isAppHttpUrl(uri)) {
+      return uri.replace(scheme: "https");
+    }
+
+    return resolveIncomingShare(uri);
+  }
+
   static Uri startUri({Uri? incoming}) {
     if (incoming == null) return defaultChatUri;
-    return resolveIncomingShare(incoming) ?? defaultChatUri;
+    return resolveIncomingAppUrl(incoming) ?? defaultChatUri;
   }
 }

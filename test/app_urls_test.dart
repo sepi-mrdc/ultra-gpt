@@ -6,19 +6,27 @@ void main() {
   group("UltraGptUrls", () {
     test("treats localized and bare share paths as share links", () {
       expect(
-        UltraGptUrls.isShareHttpUrl(Uri.parse("https://app.ultragpt.pro/en/share/abc")),
+        UltraGptUrls.isShareHttpUrl(
+          Uri.parse("https://app.ultragpt.pro/en/share/abc"),
+        ),
         isTrue,
       );
       expect(
-        UltraGptUrls.isShareHttpUrl(Uri.parse("https://app.ultragpt.pro/ru/share/abc")),
+        UltraGptUrls.isShareHttpUrl(
+          Uri.parse("https://app.ultragpt.pro/ru/share/abc"),
+        ),
         isTrue,
       );
       expect(
-        UltraGptUrls.isShareHttpUrl(Uri.parse("https://app.ultragpt.pro/share/abc")),
+        UltraGptUrls.isShareHttpUrl(
+          Uri.parse("https://app.ultragpt.pro/share/abc"),
+        ),
         isTrue,
       );
       expect(
-        UltraGptUrls.isShareHttpUrl(Uri.parse("https://app.ultragpt.pro/en/chat")),
+        UltraGptUrls.isShareHttpUrl(
+          Uri.parse("https://app.ultragpt.pro/en/chat"),
+        ),
         isFalse,
       );
       expect(
@@ -46,31 +54,60 @@ void main() {
 
     test("maps custom-scheme share links to the public share page", () {
       expect(
-        UltraGptUrls.resolveIncomingShare(Uri.parse("ultragpt://share/abc-123"))?.toString(),
+        UltraGptUrls.resolveIncomingShare(
+          Uri.parse("ultragpt://share/abc-123"),
+        )?.toString(),
         "https://app.ultragpt.pro/en/share/abc-123",
       );
       expect(
-        UltraGptUrls.resolveIncomingShare(Uri.parse("ultragpt:///share/abc-123"))?.toString(),
+        UltraGptUrls.resolveIncomingShare(
+          Uri.parse("ultragpt:///share/abc-123"),
+        )?.toString(),
         "https://app.ultragpt.pro/en/share/abc-123",
       );
       expect(
-        UltraGptUrls.resolveIncomingShare(Uri.parse("ultragpt://share?token=abc-123"))
-            ?.toString(),
+        UltraGptUrls.resolveIncomingShare(
+          Uri.parse("ultragpt://share?token=abc-123"),
+        )?.toString(),
         "https://app.ultragpt.pro/en/share/abc-123",
       );
       expect(
-        UltraGptUrls.resolveIncomingShare(Uri.parse("ultragpt://open?token=abc-123")),
+        UltraGptUrls.resolveIncomingShare(
+          Uri.parse("ultragpt://open?token=abc-123"),
+        ),
         isNull,
       );
     });
 
-    test("starts on chat unless the incoming link is a share URL", () {
+    test("maps app links to UltraGPT pages", () {
       expect(
-        UltraGptUrls.startUri().toString(),
-        UltraGptUrls.defaultChatUrl,
+        UltraGptUrls.resolveIncomingAppUrl(
+          Uri.parse(
+            "http://app.ultragpt.pro/en/auth/callback?code=123&state=abc",
+          ),
+        )?.toString(),
+        "https://app.ultragpt.pro/en/auth/callback?code=123&state=abc",
       );
       expect(
-        UltraGptUrls.startUri(incoming: Uri.parse("https://example.com")).toString(),
+        UltraGptUrls.resolveIncomingAppUrl(
+          Uri.parse("https://staging-app.ultragpt.pro/en/chat"),
+        )?.toString(),
+        "https://staging-app.ultragpt.pro/en/chat",
+      );
+      expect(
+        UltraGptUrls.resolveIncomingAppUrl(
+          Uri.parse("https://example.com/en/chat"),
+        ),
+        isNull,
+      );
+    });
+
+    test("starts on chat unless the incoming link is an UltraGPT URL", () {
+      expect(UltraGptUrls.startUri().toString(), UltraGptUrls.defaultChatUrl);
+      expect(
+        UltraGptUrls.startUri(
+          incoming: Uri.parse("https://example.com"),
+        ).toString(),
         UltraGptUrls.defaultChatUrl,
       );
       expect(
@@ -84,6 +121,14 @@ void main() {
           incoming: Uri.parse("https://staging-app.ultragpt.pro/share/ready"),
         ).toString(),
         "https://staging-app.ultragpt.pro/share/ready",
+      );
+      expect(
+        UltraGptUrls.startUri(
+          incoming: Uri.parse(
+            "https://app.ultragpt.pro/en/auth/callback?code=123",
+          ),
+        ).toString(),
+        "https://app.ultragpt.pro/en/auth/callback?code=123",
       );
     });
   });

@@ -18,6 +18,7 @@ const Duration _startupRevealFadeDuration = Duration(milliseconds: 220);
 const Duration _pageReadyTimeout = Duration(seconds: 3);
 const Duration _pageReadyPollInterval = Duration(milliseconds: 80);
 const Duration _pageReadyEvaluationTimeout = Duration(milliseconds: 250);
+const Set<String> _googleAuthHosts = {"accounts.google.com"};
 
 const SystemUiOverlayStyle _systemUiOverlayStyle = SystemUiOverlayStyle(
   statusBarColor: Colors.transparent,
@@ -151,7 +152,7 @@ class _WebViewPageState extends State<WebViewPage> {
   }
 
   void _onIncomingAppLink(Uri uri) {
-    final resolved = UltraGptUrls.resolveIncomingShare(uri);
+    final resolved = UltraGptUrls.resolveIncomingAppUrl(uri);
     if (resolved == null) return;
 
     final nextUrl = WebUri(resolved.toString());
@@ -196,7 +197,6 @@ class _WebViewPageState extends State<WebViewPage> {
           backgroundColor: _startupBackgroundColor,
           resizeToAvoidBottomInset: false,
           body: SafeArea(
-            bottom: false,
             child: Stack(
               children: [
                 _buildWebView(),
@@ -270,6 +270,14 @@ class _WebViewPageState extends State<WebViewPage> {
           },
           shouldOverrideUrlLoading: (_, navigationAction) async {
             final url = navigationAction.request.url;
+            final isMainFrame = navigationAction.isForMainFrame == true;
+
+            if (url != null &&
+                isMainFrame &&
+                _shouldOpenInSystemBrowserForAuth(url)) {
+              await _openExternalUrl(url);
+              return NavigationActionPolicy.CANCEL;
+            }
 
             if (url == null || _isBlankUrl(url) || _isWebUrl(url)) {
               return NavigationActionPolicy.ALLOW;
@@ -286,7 +294,9 @@ class _WebViewPageState extends State<WebViewPage> {
 
             if (url == null) return false;
 
-            if (_isWebUrl(url)) {
+            if (_shouldOpenInSystemBrowserForAuth(url)) {
+              await _openExternalUrl(url);
+            } else if (_isWebUrl(url)) {
               await controller.loadUrl(urlRequest: URLRequest(url: url));
             } else {
               await _openExternalUrl(url);
@@ -551,6 +561,13 @@ class _WebViewPageState extends State<WebViewPage> {
 
   bool _isWebUrl(WebUri url) {
     return url.scheme == "http" || url.scheme == "https";
+  }
+
+  bool _shouldOpenInSystemBrowserForAuth(WebUri url) {
+    final uri = Uri.tryParse(url.toString());
+    if (uri == null) return false;
+
+    return _googleAuthHosts.contains(uri.host.toLowerCase());
   }
 
   Future<void> _openExternalUrl(WebUri url) async {
