@@ -8,7 +8,7 @@ plugins {
 android {
     namespace = "com.example.ultragpt3"
     compileSdk = flutter.compileSdkVersion
-    buildToolsVersion = "35.0.0"
+        buildToolsVersion = "36.0.0"
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
