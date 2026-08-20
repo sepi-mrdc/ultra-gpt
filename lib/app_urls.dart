@@ -1,10 +1,18 @@
 class UltraGptUrls {
   static const host = "app.ultragpt.pro";
   static const stagingHost = "staging-app.ultragpt.pro";
+  static const apiHost = "api.ultragpt.pro";
   static const shareHosts = {host, stagingHost};
   static const customScheme = "ultragpt";
   static const defaultChatUrl = "https://$host/en/chat";
+  static const googleWebClientId =
+      "96652713846-k7anfa6dlk4r8igb28ar1dm9da7r8gdr.apps.googleusercontent.com";
+  static const googleAuthHost = "accounts.google.com";
   static const _defaultShareLocale = "en";
+  static final _authCallbackPathPattern = RegExp(
+    r"^/(?:[a-z]{2}/)?auth/callback/?$",
+    caseSensitive: false,
+  );
 
   static final _sharePathPattern = RegExp(
     r"^/(?:[a-z]{2}/)?share(?:/.*)?$",
@@ -24,6 +32,42 @@ class UltraGptUrls {
   static bool isAppHttpUrl(Uri uri) {
     if (uri.scheme != "http" && uri.scheme != "https") return false;
     return shareHosts.contains(uri.host.toLowerCase());
+  }
+
+  static bool isGoogleAuthStartUrl(Uri uri) {
+    if (uri.scheme != "http" && uri.scheme != "https") return false;
+
+    final host = uri.host.toLowerCase();
+    if (host == googleAuthHost) return true;
+
+    if (host != apiHost) return false;
+
+    return uri.path.toLowerCase() == "/auth/google";
+  }
+
+  static bool isOAuthCallbackUrl(Uri uri) {
+    if (!isAppHttpUrl(uri)) return false;
+    return _authCallbackPathPattern.hasMatch(uri.path);
+  }
+
+  static Uri apiGoogleCallbackUri(String code) {
+    return Uri(
+      scheme: "https",
+      host: apiHost,
+      path: "/auth/google/callback",
+      queryParameters: {"code": code},
+    );
+  }
+
+  static String? localeFromAppUrl(Uri uri) {
+    if (!isAppHttpUrl(uri)) return null;
+
+    final segments = uri.pathSegments.where((part) => part.isNotEmpty);
+    if (segments.isEmpty) return null;
+
+    final locale = segments.first;
+    if (RegExp(r"^[a-z]{2}$").hasMatch(locale)) return locale;
+    return null;
   }
 
   static String? shareTokenFromCustomScheme(Uri uri) {
@@ -78,8 +122,8 @@ class UltraGptUrls {
     return publicShareUri(token);
   }
 
-  /// Maps incoming OS links back to UltraGPT pages. This includes OAuth
-  /// callback URLs opened after Google auth runs in the system browser.
+  /// Maps incoming OS links back to UltraGPT pages, including OAuth callback
+  /// URLs that should reopen inside the WebView after authentication.
   static Uri? resolveIncomingAppUrl(Uri uri) {
     if (isAppHttpUrl(uri)) {
       return uri.replace(scheme: "https");

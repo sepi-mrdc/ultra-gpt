@@ -9,6 +9,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:app_links/app_links.dart';
 
 import 'app_urls.dart';
+import 'google_auth.dart';
 import 'web_share_bridge.dart';
 
 const Color _startupBackgroundColor = Color(0xFF010822);
@@ -18,7 +19,6 @@ const Duration _startupRevealFadeDuration = Duration(milliseconds: 220);
 const Duration _pageReadyTimeout = Duration(seconds: 3);
 const Duration _pageReadyPollInterval = Duration(milliseconds: 80);
 const Duration _pageReadyEvaluationTimeout = Duration(milliseconds: 250);
-const Set<String> _googleAuthHosts = {"accounts.google.com"};
 
 const SystemUiOverlayStyle _systemUiOverlayStyle = SystemUiOverlayStyle(
   statusBarColor: Colors.transparent,
@@ -122,6 +122,8 @@ class _WebViewPageState extends State<WebViewPage> {
   late final StreamSubscription connectivitySubscription;
   StreamSubscription<Uri>? appLinkSubscription;
   InAppWebViewController? webViewController;
+  final UltraGptGoogleAuth _googleAuth = UltraGptGoogleAuth();
+  bool _isGoogleSignInInProgress = false;
 
   @override
   void initState() {
@@ -274,8 +276,8 @@ class _WebViewPageState extends State<WebViewPage> {
 
             if (url != null &&
                 isMainFrame &&
-                _shouldOpenInSystemBrowserForAuth(url)) {
-              await _openExternalUrl(url);
+                _shouldHandleNativeGoogleAuth(url)) {
+              unawaited(_handleNativeGoogleSignIn());
               return NavigationActionPolicy.CANCEL;
             }
 
@@ -294,8 +296,8 @@ class _WebViewPageState extends State<WebViewPage> {
 
             if (url == null) return false;
 
-            if (_shouldOpenInSystemBrowserForAuth(url)) {
-              await _openExternalUrl(url);
+            if (_shouldHandleNativeGoogleAuth(url)) {
+              unawaited(_handleNativeGoogleSignIn());
             } else if (_isWebUrl(url)) {
               await controller.loadUrl(urlRequest: URLRequest(url: url));
             } else {
@@ -563,11 +565,47 @@ class _WebViewPageState extends State<WebViewPage> {
     return url.scheme == "http" || url.scheme == "https";
   }
 
-  bool _shouldOpenInSystemBrowserForAuth(WebUri url) {
+  bool _shouldHandleNativeGoogleAuth(WebUri url) {
     final uri = Uri.tryParse(url.toString());
     if (uri == null) return false;
 
-    return _googleAuthHosts.contains(uri.host.toLowerCase());
+    return UltraGptUrls.isGoogleAuthStartUrl(uri);
+  }
+
+  Future<void> _handleNativeGoogleSignIn() async {
+    if (_isGoogleSignInInProgress || !mounted) return;
+
+    final controller = webViewController;
+    if (controller == null) return;
+
+    setState(() {
+      _isGoogleSignInInProgress = true;
+    });
+
+    try {
+      final callbackUri = await _googleAuth.signInAndBuildApiCallbackUri();
+      if (!mounted || callbackUri == null) return;
+
+      currentMainFrameUrl = WebUri(callbackUri.toString());
+      await controller.loadUrl(
+        urlRequest: URLRequest(url: currentMainFrameUrl),
+      );
+    } catch (_) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).clearSnackBars();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Google sign-in failed. Please try again."),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isGoogleSignInInProgress = false;
+        });
+      }
+    }
   }
 
   Future<void> _openExternalUrl(WebUri url) async {

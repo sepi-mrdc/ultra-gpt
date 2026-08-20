@@ -63,6 +63,16 @@
 					<string>ultragpt</string>
 				</array>
 			</dict>
+			<dict>
+				<key>CFBundleTypeRole</key>
+				<string>Editor</string>
+				<key>CFBundleURLName</key>
+				<string>com.googleusercontent.apps.ultragpt</string>
+				<key>CFBundleURLSchemes</key>
+				<array>
+					<string>com.googleusercontent.apps.96652713846-k7anfa6dlk4r8igb28ar1dm9da7r8gdr</string>
+				</array>
+			</dict>
 		</array>
 		<key>FlutterDeepLinkingEnabled</key>
 		<false/>

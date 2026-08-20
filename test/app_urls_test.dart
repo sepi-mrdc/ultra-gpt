@@ -90,6 +90,14 @@ void main() {
       );
       expect(
         UltraGptUrls.resolveIncomingAppUrl(
+          Uri.parse(
+            "https://app.ultragpt.pro/en/auth/callback?token=abc123",
+          ),
+        )?.toString(),
+        "https://app.ultragpt.pro/en/auth/callback?token=abc123",
+      );
+      expect(
+        UltraGptUrls.resolveIncomingAppUrl(
           Uri.parse("https://staging-app.ultragpt.pro/en/chat"),
         )?.toString(),
         "https://staging-app.ultragpt.pro/en/chat",
@@ -99,6 +107,43 @@ void main() {
           Uri.parse("https://example.com/en/chat"),
         ),
         isNull,
+      );
+    });
+
+    test("detects Google auth start and callback URLs", () {
+      expect(
+        UltraGptUrls.isGoogleAuthStartUrl(
+          Uri.parse("https://accounts.google.com/o/oauth2/v2/auth"),
+        ),
+        isTrue,
+      );
+      expect(
+        UltraGptUrls.isGoogleAuthStartUrl(
+          Uri.parse("https://api.ultragpt.pro/auth/google"),
+        ),
+        isTrue,
+      );
+      expect(
+        UltraGptUrls.isGoogleAuthStartUrl(
+          Uri.parse("https://api.ultragpt.pro/auth/google/callback?code=1"),
+        ),
+        isFalse,
+      );
+      expect(
+        UltraGptUrls.isOAuthCallbackUrl(
+          Uri.parse("https://app.ultragpt.pro/en/auth/callback?token=abc"),
+        ),
+        isTrue,
+      );
+      expect(
+        UltraGptUrls.apiGoogleCallbackUri("server-code").toString(),
+        "https://api.ultragpt.pro/auth/google/callback?code=server-code",
+      );
+      expect(
+        UltraGptUrls.localeFromAppUrl(
+          Uri.parse("https://app.ultragpt.pro/en/chat"),
+        ),
+        "en",
       );
     });
 

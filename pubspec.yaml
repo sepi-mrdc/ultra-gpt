@@ -20,6 +20,7 @@ dependencies:
   url_launcher_android: 6.3.24
   app_links: ^6.4.1
   share_plus: ^10.1.4
+  google_sign_in: ^6.2.2
 
 dev_dependencies:
   flutter_test:
