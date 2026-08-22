@@ -9,6 +9,8 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:app_links/app_links.dart';
 
 import 'app_urls.dart';
+import 'download_bridge.dart';
+import 'download_service.dart';
 import 'google_auth.dart';
 import 'web_share_bridge.dart';
 
@@ -125,7 +127,9 @@ class _WebViewPageState extends State<WebViewPage> {
   StreamSubscription<Uri>? appLinkSubscription;
   InAppWebViewController? webViewController;
   final UltraGptGoogleAuth _googleAuth = UltraGptGoogleAuth();
+  final UltraGptDownloadService _downloadService = UltraGptDownloadService();
   bool _isGoogleSignInInProgress = false;
+  bool _isDownloadInProgress = false;
 
   @override
   void initState() {
@@ -180,6 +184,14 @@ class _WebViewPageState extends State<WebViewPage> {
       await controller.evaluateJavascript(source: shareBridgeJavaScript);
     } catch (_) {
       // The share polyfill is best-effort and should not block page load.
+    }
+  }
+
+  Future<void> _installDownloadBridge(InAppWebViewController controller) async {
+    try {
+      await controller.evaluateJavascript(source: downloadBridgeJavaScript);
+    } catch (_) {
+      // The download bridge is best-effort and should not block page load.
     }
   }
 
@@ -260,6 +272,13 @@ class _WebViewPageState extends State<WebViewPage> {
                   return true;
                 },
               );
+              controller.addJavaScriptHandler(
+                handlerName: downloadBlobHandlerName,
+                callback: (args) async {
+                  await _handleBlobDownload(args.isEmpty ? null : args.first);
+                  return true;
+                },
+              );
             } catch (_) {
               // Handler may already exist if the WebView is recreated.
             }
@@ -293,7 +312,7 @@ class _WebViewPageState extends State<WebViewPage> {
             return NavigationActionPolicy.CANCEL;
           },
           onDownloadStartRequest: (_, downloadStartRequest) async {
-            await _openExternalUrl(downloadStartRequest.url);
+            await _handleWebViewDownload(downloadStartRequest);
           },
           onCreateWindow: (controller, createWindowAction) async {
             final url = createWindowAction.request.url;
@@ -378,6 +397,7 @@ class _WebViewPageState extends State<WebViewPage> {
           },
           onLoadStop: (controller, __) {
             unawaited(_installShareBridge(controller));
+            unawaited(_installDownloadBridge(controller));
 
             if (pageLoadFailed) {
               setState(() {
@@ -622,6 +642,86 @@ class _WebViewPageState extends State<WebViewPage> {
       if (mounted) {
         setState(() {
           _isGoogleSignInInProgress = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _handleWebViewDownload(
+    DownloadStartRequest downloadStartRequest,
+  ) async {
+    if (_isDownloadInProgress) return;
+
+    if (!mounted) return;
+    setState(() {
+      _isDownloadInProgress = true;
+    });
+
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("Downloading to Ultra GPT...")),
+    );
+
+    try {
+      final result = await _downloadService.downloadFromRequest(
+        downloadStartRequest,
+      );
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).clearSnackBars();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Saved "${result.fileName}" to Ultra GPT'),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).clearSnackBars();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Download failed: $error")),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isDownloadInProgress = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _handleBlobDownload(Object? payload) async {
+    if (_isDownloadInProgress) return;
+
+    if (!mounted) return;
+    setState(() {
+      _isDownloadInProgress = true;
+    });
+
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("Downloading to Ultra GPT...")),
+    );
+
+    try {
+      await downloadBlobFromWeb(payload, _downloadService);
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).clearSnackBars();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Saved download to Ultra GPT')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).clearSnackBars();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Download failed: $error")),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isDownloadInProgress = false;
         });
       }
     }
