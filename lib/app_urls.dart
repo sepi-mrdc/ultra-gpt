@@ -6,7 +6,7 @@ class UltraGptUrls {
   static const customScheme = "ultragpt";
   static const defaultChatUrl = "https://$host/en/chat";
   static const googleWebClientId =
-      "96652713846-k7anfa6dlk4r8igb28ar1dm9da7r8gdr.apps.googleusercontent.com";
+      "46935507532-vdp04kdbgt1a4jecpfad4hdmg4hta2ek.apps.googleusercontent.com";
   static const googleAuthHost = "accounts.google.com";
   static const _defaultShareLocale = "en";
   static final _authCallbackPathPattern = RegExp(
