@@ -215,7 +215,7 @@ class _WebViewPageState extends State<WebViewPage> {
         },
         child: Scaffold(
           backgroundColor: _startupBackgroundColor,
-          resizeToAvoidBottomInset: false,
+          resizeToAvoidBottomInset: true,
           body: SafeArea(
             child: Stack(
               children: [
