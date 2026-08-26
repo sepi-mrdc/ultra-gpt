@@ -236,237 +236,241 @@ class _WebViewPageState extends State<WebViewPage> {
         AbsorbPointer(
           absorbing: _isGoogleSignInInProgress,
           child: InAppWebView(
-          initialUrlRequest: URLRequest(url: _initialUrl),
-          initialSettings: InAppWebViewSettings(
-            domStorageEnabled: true,
-            databaseEnabled: true,
-            cacheEnabled: true,
-            clearCache: false,
-            cacheMode: CacheMode.LOAD_DEFAULT,
-            javaScriptEnabled: true,
-            thirdPartyCookiesEnabled: true,
-            sharedCookiesEnabled: true,
-            loadsImagesAutomatically: true,
-            offscreenPreRaster: true,
-            useShouldOverrideUrlLoading: true,
-            useOnDownloadStart: true,
-            supportMultipleWindows: true,
-            javaScriptCanOpenWindowsAutomatically: true,
-            mediaPlaybackRequiresUserGesture: false,
-            supportZoom: false,
-            builtInZoomControls: false,
-            displayZoomControls: false,
-            verticalScrollBarEnabled: false,
-            horizontalScrollBarEnabled: false,
-            overScrollMode: OverScrollMode.NEVER,
-            safeBrowsingEnabled: true,
-            disableDefaultErrorPage: true,
-            transparentBackground: false,
-            underPageBackgroundColor: _startupBackgroundColor,
-          ),
-          onWebViewCreated: (controller) {
-            webViewController = controller;
-            try {
-              controller.addJavaScriptHandler(
-                handlerName: shareConversationHandlerName,
-                callback: (args) async {
-                  await shareConversationFromWeb(
-                    args.isEmpty ? null : args.first,
-                  );
-                  return true;
-                },
-              );
-              controller.addJavaScriptHandler(
-                handlerName: downloadBlobHandlerName,
-                callback: (args) async {
-                  await _handleBlobDownload(args.isEmpty ? null : args.first);
-                  return true;
-                },
-              );
-            } catch (_) {
-              // Handler may already exist if the WebView is recreated.
-            }
+            initialUrlRequest: URLRequest(url: _initialUrl),
+            initialSettings: InAppWebViewSettings(
+              domStorageEnabled: true,
+              databaseEnabled: true,
+              cacheEnabled: true,
+              clearCache: false,
+              cacheMode: CacheMode.LOAD_DEFAULT,
+              javaScriptEnabled: true,
+              thirdPartyCookiesEnabled: true,
+              sharedCookiesEnabled: true,
+              loadsImagesAutomatically: true,
+              offscreenPreRaster: true,
+              useShouldOverrideUrlLoading: true,
+              useOnDownloadStart: true,
+              supportMultipleWindows: true,
+              javaScriptCanOpenWindowsAutomatically: true,
+              mediaPlaybackRequiresUserGesture: false,
+              supportZoom: false,
+              builtInZoomControls: false,
+              displayZoomControls: false,
+              verticalScrollBarEnabled: false,
+              horizontalScrollBarEnabled: false,
+              overScrollMode: OverScrollMode.NEVER,
+              safeBrowsingEnabled: true,
+              disableDefaultErrorPage: true,
+              transparentBackground: false,
+              underPageBackgroundColor: _startupBackgroundColor,
+            ),
+            onWebViewCreated: (controller) {
+              webViewController = controller;
+              try {
+                controller.addJavaScriptHandler(
+                  handlerName: shareConversationHandlerName,
+                  callback: (args) async {
+                    await shareConversationFromWeb(
+                      args.isEmpty ? null : args.first,
+                    );
+                    return true;
+                  },
+                );
+                controller.addJavaScriptHandler(
+                  handlerName: downloadBlobHandlerName,
+                  callback: (args) async {
+                    await _handleBlobDownload(args.isEmpty ? null : args.first);
+                    return true;
+                  },
+                );
+              } catch (_) {
+                // Handler may already exist if the WebView is recreated.
+              }
 
-            final pendingShareUrl = currentMainFrameUrl;
-            if (pendingShareUrl != null &&
-                pendingShareUrl.toString() != _initialUrl.toString()) {
-              unawaited(
-                controller.loadUrl(
-                  urlRequest: URLRequest(url: pendingShareUrl),
-                ),
-              );
-            }
-          },
-          shouldOverrideUrlLoading: (_, navigationAction) async {
-            final url = navigationAction.request.url;
-            final isMainFrame = navigationAction.isForMainFrame == true;
+              final pendingShareUrl = currentMainFrameUrl;
+              if (pendingShareUrl != null &&
+                  pendingShareUrl.toString() != _initialUrl.toString()) {
+                unawaited(
+                  controller.loadUrl(
+                    urlRequest: URLRequest(url: pendingShareUrl),
+                  ),
+                );
+              }
+            },
+            shouldOverrideUrlLoading: (_, navigationAction) async {
+              final url = navigationAction.request.url;
+              final isMainFrame = navigationAction.isForMainFrame == true;
 
-            if (url != null &&
-                isMainFrame &&
-                _shouldHandleNativeGoogleAuth(url)) {
-              unawaited(_handleNativeGoogleSignIn());
-              return NavigationActionPolicy.CANCEL;
-            }
+              if (url != null &&
+                  isMainFrame &&
+                  _shouldHandleNativeGoogleAuth(url)) {
+                unawaited(_handleNativeGoogleSignIn());
+                return NavigationActionPolicy.CANCEL;
+              }
 
-            if (url == null || _isBlankUrl(url) || _isWebUrl(url)) {
-              return NavigationActionPolicy.ALLOW;
-            }
+              if (url == null || _isBlankUrl(url) || _isWebUrl(url)) {
+                return NavigationActionPolicy.ALLOW;
+              }
 
-            await _openExternalUrl(url);
-            return NavigationActionPolicy.CANCEL;
-          },
-          onDownloadStartRequest: (_, downloadStartRequest) async {
-            await _handleWebViewDownload(downloadStartRequest);
-          },
-          onCreateWindow: (controller, createWindowAction) async {
-            final url = createWindowAction.request.url;
-
-            if (url == null) return false;
-
-            if (_shouldHandleNativeGoogleAuth(url)) {
-              unawaited(_handleNativeGoogleSignIn());
-            } else if (_isWebUrl(url)) {
-              await controller.loadUrl(urlRequest: URLRequest(url: url));
-            } else {
               await _openExternalUrl(url);
-            }
+              return NavigationActionPolicy.CANCEL;
+            },
+            onDownloadStartRequest: (_, downloadStartRequest) async {
+              await _handleWebViewDownload(downloadStartRequest);
+            },
+            onCreateWindow: (controller, createWindowAction) async {
+              final url = createWindowAction.request.url;
 
-            return true;
-          },
-          onPermissionRequest: (_, request) async {
-            final grantedResources = <PermissionResourceType>[];
-            WebPermissionResult? blockedPermission;
+              if (url == null) return false;
 
-            for (final resource in request.resources) {
-              final result = await _requestWebPermission(resource);
-
-              if (result.granted) {
-                grantedResources.add(resource);
+              if (_shouldHandleNativeGoogleAuth(url)) {
+                unawaited(_handleNativeGoogleSignIn());
+              } else if (_isWebUrl(url)) {
+                await controller.loadUrl(urlRequest: URLRequest(url: url));
               } else {
-                blockedPermission ??= result;
+                await _openExternalUrl(url);
               }
-            }
 
-            final canGrantAll =
-                grantedResources.length == request.resources.length;
+              return true;
+            },
+            onPermissionRequest: (_, request) async {
+              final grantedResources = <PermissionResourceType>[];
+              WebPermissionResult? blockedPermission;
 
-            final response = PermissionResponse(
-              resources: grantedResources,
-              action: canGrantAll
-                  ? PermissionResponseAction.GRANT
-                  : PermissionResponseAction.DENY,
-            );
+              for (final resource in request.resources) {
+                final result = await _requestWebPermission(resource);
 
-            if (!canGrantAll && blockedPermission != null) {
-              _showPermissionFallback(blockedPermission);
-            }
-
-            return response;
-          },
-          onProgressChanged: (controller, progress) {
-            if (pageLoadFailed) return;
-
-            setState(() {
-              pageProgress = progress;
-              isNavigating = !isInitialLoading && progress < 100;
-            });
-
-            if (!hasLoadedInitialPage && progress >= 85) {
-              _revealInitialPageWhenReady(controller, pageLoadGeneration);
-            }
-          },
-          onLoadStart: (_, url) {
-            pageLoadGeneration++;
-            _isWaitingForReveal = false;
-
-            if (_isBlankUrl(url) && pageLoadFailed) {
-              setState(() {
-                isInitialLoading = false;
-                showStartupOverlay = false;
-                isNavigating = false;
-              });
-              return;
-            }
-
-            setState(() {
-              if (!_isBlankUrl(url)) {
-                currentMainFrameUrl = url;
+                if (result.granted) {
+                  grantedResources.add(resource);
+                } else {
+                  blockedPermission ??= result;
+                }
               }
-              isInitialLoading = !hasLoadedInitialPage;
-              showStartupOverlay = !hasLoadedInitialPage;
-              isNavigating = hasLoadedInitialPage;
-              pageProgress = 0;
-              pageLoadFailed = false;
-              if (_isGoogleCallbackNavigation(url)) {
-                _showGoogleSignInLoading = false;
-                _isGoogleSignInInProgress = false;
-                _pendingGoogleCallbackNavigation = false;
-              }
-            });
-          },
-          onLoadStop: (controller, url) {
-            unawaited(_installShareBridge(controller));
-            unawaited(_installDownloadBridge(controller));
 
-            if (pageLoadFailed) {
-              setState(() {
-                isInitialLoading = false;
-                showStartupOverlay = false;
-                isNavigating = false;
-              });
-              _finishGoogleSignInLoading();
-              return;
-            }
+              final canGrantAll =
+                  grantedResources.length == request.resources.length;
 
-            final loadGeneration = pageLoadGeneration;
-
-            setState(() {
-              isNavigating = false;
-              pageProgress = 100;
-              pageLoadFailed = false;
-            });
-
-            if (!hasLoadedInitialPage) {
-              _revealInitialPageWhenReady(controller, loadGeneration);
-            }
-
-            if (_pendingGoogleCallbackNavigation) {
-              _finishGoogleSignInLoading();
-            }
-          },
-          onPageCommitVisible: (controller, _) {
-            if (!hasLoadedInitialPage) {
-              _revealInitialPageWhenReady(controller, pageLoadGeneration);
-            }
-          },
-          onReceivedError: (_, request, error) {
-            if (_isMainFrameLoadError(request)) {
-              _showLoadFailure(
-                _classifyWebResourceError(error),
-                failedUrl: request.url,
+              final response = PermissionResponse(
+                resources: grantedResources,
+                action: canGrantAll
+                    ? PermissionResponseAction.GRANT
+                    : PermissionResponseAction.DENY,
               );
-            }
-          },
-          onReceivedHttpError: (_, request, errorResponse) {
-            if (_isMainFrameLoadError(request) &&
-                _shouldShowRetryForHttpStatus(errorResponse.statusCode)) {
-              _showLoadFailure(
-                PageLoadFailureKind.server,
-                failedUrl: request.url,
-              );
-            }
-          },
-          onReceivedServerTrustAuthRequest: (_, __) async {
-            _showLoadFailure(
-              PageLoadFailureKind.ssl,
-              failedUrl: currentMainFrameUrl ?? _initialUrl,
-            );
 
-            return ServerTrustAuthResponse(
-              action: ServerTrustAuthResponseAction.CANCEL,
-            );
-          },
-        ),
+              if (!canGrantAll && blockedPermission != null) {
+                _showPermissionFallback(blockedPermission);
+              }
+
+              return response;
+            },
+            onProgressChanged: (controller, progress) {
+              if (pageLoadFailed) return;
+
+              setState(() {
+                pageProgress = progress;
+                isNavigating = !isInitialLoading && progress < 100;
+              });
+
+              if (!hasLoadedInitialPage && progress >= 85) {
+                _revealInitialPageWhenReady(controller, pageLoadGeneration);
+              }
+            },
+            onLoadStart: (_, url) {
+              pageLoadGeneration++;
+              _isWaitingForReveal = false;
+
+              if (_isBlankUrl(url) && pageLoadFailed) {
+                setState(() {
+                  isInitialLoading = false;
+                  showStartupOverlay = false;
+                  isNavigating = false;
+                });
+                return;
+              }
+
+              setState(() {
+                if (!_isBlankUrl(url)) {
+                  currentMainFrameUrl = url;
+                }
+                isInitialLoading = !hasLoadedInitialPage;
+                showStartupOverlay = !hasLoadedInitialPage;
+                isNavigating = hasLoadedInitialPage;
+                pageProgress = 0;
+                pageLoadFailed = false;
+              });
+            },
+            onLoadStop: (controller, url) {
+              unawaited(_installShareBridge(controller));
+              unawaited(_installDownloadBridge(controller));
+
+              if (pageLoadFailed) {
+                setState(() {
+                  isInitialLoading = false;
+                  showStartupOverlay = false;
+                  isNavigating = false;
+                });
+                _finishGoogleSignInLoading();
+                return;
+              }
+
+              final loadGeneration = pageLoadGeneration;
+
+              setState(() {
+                isNavigating = false;
+                pageProgress = 100;
+                pageLoadFailed = false;
+              });
+
+              if (!hasLoadedInitialPage) {
+                _revealInitialPageWhenReady(controller, loadGeneration);
+              }
+
+              if (_isGoogleCallbackNavigation(url ?? currentMainFrameUrl)) {
+                unawaited(
+                  _finishGoogleSignInLoadingWhenWebViewIsReady(
+                    controller,
+                    loadGeneration,
+                  ),
+                );
+              }
+            },
+            onPageCommitVisible: (controller, url) {
+              if (_isGoogleCallbackNavigation(url ?? currentMainFrameUrl)) {
+                _finishGoogleSignInLoadingAfterVisibleFrame(pageLoadGeneration);
+              }
+
+              if (!hasLoadedInitialPage) {
+                _revealInitialPageWhenReady(controller, pageLoadGeneration);
+              }
+            },
+            onReceivedError: (_, request, error) {
+              if (_isMainFrameLoadError(request)) {
+                _showLoadFailure(
+                  _classifyWebResourceError(error),
+                  failedUrl: request.url,
+                );
+              }
+            },
+            onReceivedHttpError: (_, request, errorResponse) {
+              if (_isMainFrameLoadError(request) &&
+                  _shouldShowRetryForHttpStatus(errorResponse.statusCode)) {
+                _showLoadFailure(
+                  PageLoadFailureKind.server,
+                  failedUrl: request.url,
+                );
+              }
+            },
+            onReceivedServerTrustAuthRequest: (_, __) async {
+              _showLoadFailure(
+                PageLoadFailureKind.ssl,
+                failedUrl: currentMainFrameUrl ?? _initialUrl,
+              );
+
+              return ServerTrustAuthResponse(
+                action: ServerTrustAuthResponseAction.CANCEL,
+              );
+            },
+          ),
         ),
         if (isNavigating && !pageLoadFailed && !_showGoogleSignInLoading)
           LinearProgressIndicator(
@@ -628,7 +632,9 @@ class _WebViewPageState extends State<WebViewPage> {
     try {
       final locale =
           UltraGptUrls.localeFromAppUrl(
-            Uri.parse(currentMainFrameUrl?.toString() ?? _initialUrl.toString()),
+            Uri.parse(
+              currentMainFrameUrl?.toString() ?? _initialUrl.toString(),
+            ),
           ) ??
           "en";
 
@@ -654,9 +660,9 @@ class _WebViewPageState extends State<WebViewPage> {
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).clearSnackBars();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.message)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
     } on PlatformException catch (error) {
       if (!mounted) return;
       if (_isGoogleSignInCanceled(error)) return;
@@ -699,6 +705,43 @@ class _WebViewPageState extends State<WebViewPage> {
             !UltraGptUrls.isGoogleAuthStartUrl(uri));
   }
 
+  Future<void> _finishGoogleSignInLoadingWhenWebViewIsReady(
+    InAppWebViewController controller,
+    int loadGeneration,
+  ) async {
+    if (!_pendingGoogleCallbackNavigation ||
+        pageLoadFailed ||
+        !mounted ||
+        loadGeneration != pageLoadGeneration) {
+      return;
+    }
+
+    final isReady = await _waitForVisualReadiness(controller, loadGeneration);
+
+    if (!_pendingGoogleCallbackNavigation ||
+        pageLoadFailed ||
+        !mounted ||
+        loadGeneration != pageLoadGeneration ||
+        !isReady) {
+      return;
+    }
+
+    _finishGoogleSignInLoadingAfterVisibleFrame(loadGeneration);
+  }
+
+  void _finishGoogleSignInLoadingAfterVisibleFrame(int loadGeneration) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_pendingGoogleCallbackNavigation ||
+          pageLoadFailed ||
+          !mounted ||
+          loadGeneration != pageLoadGeneration) {
+        return;
+      }
+
+      _finishGoogleSignInLoading();
+    });
+  }
+
   void _finishGoogleSignInLoading() {
     if (!mounted) return;
     if (!_isGoogleSignInInProgress &&
@@ -737,17 +780,15 @@ class _WebViewPageState extends State<WebViewPage> {
 
       ScaffoldMessenger.of(context).clearSnackBars();
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Saved "${result.fileName}" to Ultra GPT'),
-        ),
+        SnackBar(content: Text('Saved "${result.fileName}" to Ultra GPT')),
       );
     } catch (error) {
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).clearSnackBars();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Download failed: $error")),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Download failed: $error")));
     } finally {
       if (mounted) {
         setState(() {
@@ -782,9 +823,9 @@ class _WebViewPageState extends State<WebViewPage> {
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).clearSnackBars();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Download failed: $error")),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Download failed: $error")));
     } finally {
       if (mounted) {
         setState(() {
