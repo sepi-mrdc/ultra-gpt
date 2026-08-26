@@ -59,6 +59,14 @@ class UltraGptUrls {
     );
   }
 
+  static Uri get apiGoogleMobileUri {
+    return Uri(
+      scheme: "https",
+      host: apiHost,
+      path: "/auth/google/mobile",
+    );
+  }
+
   static String? localeFromAppUrl(Uri uri) {
     if (!isAppHttpUrl(uri)) return null;
 

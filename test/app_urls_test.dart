@@ -140,6 +140,10 @@ void main() {
         "https://api.ultragpt.pro/auth/google/callback?code=server-code",
       );
       expect(
+        UltraGptUrls.apiGoogleMobileUri.toString(),
+        "https://api.ultragpt.pro/auth/google/mobile",
+      );
+      expect(
         UltraGptUrls.localeFromAppUrl(
           Uri.parse("https://app.ultragpt.pro/en/chat"),
         ),

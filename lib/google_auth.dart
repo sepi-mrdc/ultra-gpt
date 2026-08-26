@@ -1,4 +1,5 @@
 import "dart:async";
+import "dart:convert";
 
 import "package:google_sign_in/google_sign_in.dart";
 import "package:http/http.dart" as http;
@@ -26,6 +27,18 @@ class GoogleAuthException implements Exception {
   factory GoogleAuthException.unexpectedCallback(Uri uri) {
     return GoogleAuthException(
       "Unexpected auth redirect: ${uri.host}${uri.path}",
+    );
+  }
+
+  factory GoogleAuthException.invalidCallback() {
+    return GoogleAuthException(
+      "UltraGPT did not return a valid sign-in callback URL.",
+    );
+  }
+
+  factory GoogleAuthException.networkFailed() {
+    return GoogleAuthException(
+      "Could not complete Google sign-in. Check your connection and try again.",
     );
   }
 
@@ -109,7 +122,7 @@ class UltraGptGoogleAuth {
 }
 
 /// Exchanges the native Google server auth code for the UltraGPT app callback
-/// URL (`/auth/callback?token=...`) by following the API redirect chain.
+/// URL (`/auth/callback?token=...`) via the mobile auth endpoint.
 Future<Uri> resolveAppCallbackFromApiCode(
   String serverAuthCode, {
   String locale = "en",
@@ -120,33 +133,50 @@ Future<Uri> resolveAppCallbackFromApiCode(
 
   try {
     final response = await httpClient
-        .get(UltraGptUrls.apiGoogleCallbackUri(serverAuthCode))
+        .post(
+          UltraGptUrls.apiGoogleMobileUri,
+          headers: const {"Content-Type": "application/json"},
+          body: jsonEncode({"code": serverAuthCode}),
+        )
         .timeout(const Duration(seconds: 30));
 
-    final resolvedUri = response.request?.url;
-    if (resolvedUri != null && UltraGptUrls.isOAuthCallbackUrl(resolvedUri)) {
-      return resolvedUri;
-    }
-
-    final location = response.headers["location"];
-    if (location != null) {
-      final redirectUri = Uri.parse(location);
-      if (UltraGptUrls.isOAuthCallbackUrl(redirectUri)) {
-        return redirectUri;
-      }
-    }
-
-    if (response.statusCode >= 400) {
+    if (response.statusCode != 200) {
       throw GoogleAuthException.exchangeFailed(response.statusCode);
     }
 
-    throw GoogleAuthException.unexpectedCallback(
-      resolvedUri ?? UltraGptUrls.apiGoogleCallbackUri(serverAuthCode),
-    );
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map) {
+      throw GoogleAuthException.invalidCallback();
+    }
+
+    final callbackUrl = decoded["callbackUrl"];
+    if (callbackUrl is! String || callbackUrl.trim().isEmpty) {
+      throw GoogleAuthException.invalidCallback();
+    }
+
+    final callbackUri = Uri.tryParse(callbackUrl.trim());
+    if (callbackUri == null || !UltraGptUrls.isOAuthCallbackUrl(callbackUri)) {
+      throw GoogleAuthException.unexpectedCallback(
+        callbackUri ?? Uri.parse(callbackUrl),
+      );
+    }
+
+    final token = callbackUri.queryParameters["token"]?.trim();
+    if (token == null || token.isEmpty) {
+      throw GoogleAuthException.unexpectedCallback(callbackUri);
+    }
+
+    return callbackUri.replace(scheme: "https");
   } on GoogleAuthException {
     rethrow;
   } on TimeoutException {
-    throw GoogleAuthException("Google sign-in timed out while contacting UltraGPT.");
+    throw GoogleAuthException(
+      "Google sign-in timed out while contacting UltraGPT.",
+    );
+  } on FormatException {
+    throw GoogleAuthException.invalidCallback();
+  } catch (_) {
+    throw GoogleAuthException.networkFailed();
   } finally {
     if (shouldCloseClient) {
       httpClient.close();
