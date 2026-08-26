@@ -78,13 +78,18 @@ class UltraGptGoogleAuth {
     }
   }
 
-  /// Runs native Google sign-in and resolves the UltraGPT callback URL that
+  /// Runs native Google sign-in and resolves the UltraGPT app callback URL that
   /// contains the session token.
-  Future<Uri?> signInAndResolveAppCallbackUri({String locale = "en"}) async {
+  Future<Uri?> signInAndResolveAppCallbackUri({
+    String locale = "en",
+    void Function()? onAccountSelected,
+  }) async {
     await warmUp();
 
     final account = await _interactiveSignIn();
     if (account == null) return null;
+
+    onAccountSelected?.call();
 
     final serverAuthCode = await _readServerAuthCode(account);
     if (serverAuthCode == null || serverAuthCode.isEmpty) {
@@ -98,15 +103,23 @@ class UltraGptGoogleAuth {
   }
 
   Future<GoogleSignInAccount?> _interactiveSignIn() async {
-    final cached = _googleSignIn.currentUser;
-    if (cached != null) {
-      final cachedCode = cached.serverAuthCode;
-      if (cachedCode == null || cachedCode.isEmpty) {
+    // Google server auth codes are one-time. After UltraGPT logout, the native
+    // plugin still holds the previous account and already-exchanged code, so
+    // signIn() would reuse it and /auth/google/mobile returns HTTP 401.
+    await _clearNativeGoogleSession();
+    return _googleSignIn.signIn();
+  }
+
+  Future<void> _clearNativeGoogleSession() async {
+    try {
+      await _googleSignIn.disconnect();
+    } catch (_) {
+      try {
         await _googleSignIn.signOut();
+      } catch (_) {
+        // Best-effort reset before requesting a new serverAuthCode.
       }
     }
-
-    return _googleSignIn.signIn();
   }
 
   Future<String?> _readServerAuthCode(GoogleSignInAccount account) async {

@@ -129,6 +129,8 @@ class _WebViewPageState extends State<WebViewPage> {
   final UltraGptGoogleAuth _googleAuth = UltraGptGoogleAuth();
   final UltraGptDownloadService _downloadService = UltraGptDownloadService();
   bool _isGoogleSignInInProgress = false;
+  bool _showGoogleSignInLoading = false;
+  bool _pendingGoogleCallbackNavigation = false;
   bool _isDownloadInProgress = false;
 
   @override
@@ -231,7 +233,9 @@ class _WebViewPageState extends State<WebViewPage> {
   Widget _buildWebView() {
     return Stack(
       children: [
-        InAppWebView(
+        AbsorbPointer(
+          absorbing: _isGoogleSignInInProgress,
+          child: InAppWebView(
           initialUrlRequest: URLRequest(url: _initialUrl),
           initialSettings: InAppWebViewSettings(
             domStorageEnabled: true,
@@ -393,9 +397,14 @@ class _WebViewPageState extends State<WebViewPage> {
               isNavigating = hasLoadedInitialPage;
               pageProgress = 0;
               pageLoadFailed = false;
+              if (_isGoogleCallbackNavigation(url)) {
+                _showGoogleSignInLoading = false;
+                _isGoogleSignInInProgress = false;
+                _pendingGoogleCallbackNavigation = false;
+              }
             });
           },
-          onLoadStop: (controller, __) {
+          onLoadStop: (controller, url) {
             unawaited(_installShareBridge(controller));
             unawaited(_installDownloadBridge(controller));
 
@@ -405,6 +414,7 @@ class _WebViewPageState extends State<WebViewPage> {
                 showStartupOverlay = false;
                 isNavigating = false;
               });
+              _finishGoogleSignInLoading();
               return;
             }
 
@@ -418,6 +428,10 @@ class _WebViewPageState extends State<WebViewPage> {
 
             if (!hasLoadedInitialPage) {
               _revealInitialPageWhenReady(controller, loadGeneration);
+            }
+
+            if (_pendingGoogleCallbackNavigation) {
+              _finishGoogleSignInLoading();
             }
           },
           onPageCommitVisible: (controller, _) {
@@ -453,6 +467,14 @@ class _WebViewPageState extends State<WebViewPage> {
             );
           },
         ),
+        ),
+        if (isNavigating && !pageLoadFailed && !_showGoogleSignInLoading)
+          LinearProgressIndicator(
+            value: pageProgress > 0 ? pageProgress / 100 : null,
+            minHeight: 3,
+            color: _startupForegroundColor,
+            backgroundColor: _startupForegroundColor.withValues(alpha: 0.12),
+          ),
         if (showStartupOverlay && !pageLoadFailed)
           _StartupLoadingView(
             visible: isInitialLoading,
@@ -464,13 +486,8 @@ class _WebViewPageState extends State<WebViewPage> {
               });
             },
           ),
-        if (isNavigating && !pageLoadFailed)
-          LinearProgressIndicator(
-            value: pageProgress > 0 ? pageProgress / 100 : null,
-            minHeight: 3,
-            color: _startupForegroundColor,
-            backgroundColor: _startupForegroundColor.withValues(alpha: 0.12),
-          ),
+        if (_showGoogleSignInLoading)
+          const Positioned.fill(child: _GoogleSignInBlockingSpinner()),
       ],
     );
   }
@@ -606,6 +623,8 @@ class _WebViewPageState extends State<WebViewPage> {
       _isGoogleSignInInProgress = true;
     });
 
+    var keepLoadingForCallback = false;
+
     try {
       final locale =
           UltraGptUrls.localeFromAppUrl(
@@ -615,10 +634,19 @@ class _WebViewPageState extends State<WebViewPage> {
 
       final callbackUri = await _googleAuth.signInAndResolveAppCallbackUri(
         locale: locale,
+        onAccountSelected: () {
+          if (!mounted) return;
+          setState(() {
+            _showGoogleSignInLoading = true;
+          });
+        },
       );
-      if (!mounted || callbackUri == null) return;
+      if (!mounted) return;
+      if (callbackUri == null) return;
 
       currentMainFrameUrl = WebUri(callbackUri.toString());
+      _pendingGoogleCallbackNavigation = true;
+      keepLoadingForCallback = true;
       await controller.loadUrl(
         urlRequest: URLRequest(url: currentMainFrameUrl),
       );
@@ -628,6 +656,16 @@ class _WebViewPageState extends State<WebViewPage> {
       ScaffoldMessenger.of(context).clearSnackBars();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(error.message)),
+      );
+    } on PlatformException catch (error) {
+      if (!mounted) return;
+      if (_isGoogleSignInCanceled(error)) return;
+
+      ScaffoldMessenger.of(context).clearSnackBars();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Google sign-in failed. Please try again."),
+        ),
       );
     } catch (_) {
       if (!mounted) return;
@@ -639,12 +677,41 @@ class _WebViewPageState extends State<WebViewPage> {
         ),
       );
     } finally {
-      if (mounted) {
-        setState(() {
-          _isGoogleSignInInProgress = false;
-        });
+      if (mounted && !keepLoadingForCallback) {
+        _finishGoogleSignInLoading();
       }
     }
+  }
+
+  bool _isGoogleSignInCanceled(PlatformException error) {
+    final code = error.code.toLowerCase();
+    return code == "sign_in_canceled" || code == "sign_in_cancelled";
+  }
+
+  bool _isGoogleCallbackNavigation(WebUri? url) {
+    if (!_pendingGoogleCallbackNavigation) return false;
+
+    final uri = Uri.tryParse(url?.toString() ?? "");
+    if (uri == null) return false;
+
+    return UltraGptUrls.isOAuthCallbackUrl(uri) ||
+        (UltraGptUrls.isAppHttpUrl(uri) &&
+            !UltraGptUrls.isGoogleAuthStartUrl(uri));
+  }
+
+  void _finishGoogleSignInLoading() {
+    if (!mounted) return;
+    if (!_isGoogleSignInInProgress &&
+        !_showGoogleSignInLoading &&
+        !_pendingGoogleCallbackNavigation) {
+      return;
+    }
+
+    setState(() {
+      _isGoogleSignInInProgress = false;
+      _showGoogleSignInLoading = false;
+      _pendingGoogleCallbackNavigation = false;
+    });
   }
 
   Future<void> _handleWebViewDownload(
@@ -945,6 +1012,7 @@ class _WebViewPageState extends State<WebViewPage> {
       pageLoadFailureKind = kind;
       _isWaitingForReveal = false;
     });
+    _finishGoogleSignInLoading();
   }
 
   Future<void> _retryLoad() async {
@@ -1052,6 +1120,23 @@ class _StartupLoadingView extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _GoogleSignInBlockingSpinner extends StatelessWidget {
+  const _GoogleSignInBlockingSpinner();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Stack(
+      fit: StackFit.expand,
+      children: [
+        ModalBarrier(dismissible: false, color: Color(0x99000000)),
+        Center(
+          child: CircularProgressIndicator(color: _startupForegroundColor),
+        ),
+      ],
     );
   }
 }
