@@ -16,7 +16,7 @@ import 'google_auth.dart';
 import 'theme_bridge.dart';
 import 'web_share_bridge.dart';
 
-const Color _darkBackgroundColor = Color(0xFF010822);
+const Color _darkBackgroundColor = Color(0xFF000000);
 const Color _darkForegroundColor = Color(0xFFE8ECF8);
 const Color _lightBackgroundColor = Color(0xFFF9FAFB);
 const Color _lightForegroundColor = Color(0xFF0F172A);
@@ -40,13 +40,15 @@ Color _foregroundColorFor(Brightness brightness) {
 
 SystemUiOverlayStyle _systemUiOverlayStyleFor(Brightness brightness) {
   final lightIcons = brightness == Brightness.dark;
+  final barColor = _backgroundColorFor(brightness);
 
   return SystemUiOverlayStyle(
-    statusBarColor: Colors.transparent,
+    statusBarColor: barColor,
     statusBarIconBrightness: lightIcons ? Brightness.light : Brightness.dark,
     statusBarBrightness: lightIcons ? Brightness.dark : Brightness.light,
     systemStatusBarContrastEnforced: false,
-    systemNavigationBarColor: Colors.transparent,
+    systemNavigationBarColor: barColor,
+    systemNavigationBarDividerColor: barColor,
     systemNavigationBarIconBrightness: lightIcons
         ? Brightness.light
         : Brightness.dark,
