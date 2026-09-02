@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -12,31 +13,64 @@ import 'app_urls.dart';
 import 'download_bridge.dart';
 import 'download_service.dart';
 import 'google_auth.dart';
+import 'theme_bridge.dart';
 import 'web_share_bridge.dart';
 
-const Color _startupBackgroundColor = Color(0xFF010822);
-const Color _startupForegroundColor = Color(0xFFE8ECF8);
+const Color _darkBackgroundColor = Color(0xFF010822);
+const Color _darkForegroundColor = Color(0xFFE8ECF8);
+const Color _lightBackgroundColor = Color(0xFFF9FAFB);
+const Color _lightForegroundColor = Color(0xFF0F172A);
 const double _splashLogoSize = 240;
 const Duration _startupRevealFadeDuration = Duration(milliseconds: 220);
 const Duration _pageReadyTimeout = Duration(seconds: 3);
 const Duration _pageReadyPollInterval = Duration(milliseconds: 80);
 const Duration _pageReadyEvaluationTimeout = Duration(milliseconds: 250);
 
-const SystemUiOverlayStyle _systemUiOverlayStyle = SystemUiOverlayStyle(
-  statusBarColor: Colors.transparent,
-  statusBarIconBrightness: Brightness.light,
-  statusBarBrightness: Brightness.dark,
-  systemStatusBarContrastEnforced: false,
-  systemNavigationBarColor: Colors.transparent,
-  systemNavigationBarIconBrightness: Brightness.light,
-  systemNavigationBarContrastEnforced: false,
-);
+Color _backgroundColorFor(Brightness brightness) {
+  return brightness == Brightness.dark
+      ? _darkBackgroundColor
+      : _lightBackgroundColor;
+}
+
+Color _foregroundColorFor(Brightness brightness) {
+  return brightness == Brightness.dark
+      ? _darkForegroundColor
+      : _lightForegroundColor;
+}
+
+SystemUiOverlayStyle _systemUiOverlayStyleFor(Brightness brightness) {
+  final lightIcons = brightness == Brightness.dark;
+
+  return SystemUiOverlayStyle(
+    statusBarColor: Colors.transparent,
+    statusBarIconBrightness: lightIcons ? Brightness.light : Brightness.dark,
+    statusBarBrightness: lightIcons ? Brightness.dark : Brightness.light,
+    systemStatusBarContrastEnforced: false,
+    systemNavigationBarColor: Colors.transparent,
+    systemNavigationBarIconBrightness: lightIcons
+        ? Brightness.light
+        : Brightness.dark,
+    systemNavigationBarContrastEnforced: false,
+  );
+}
+
+UserScript _themeUserScript(Brightness brightness) {
+  return UserScript(
+    groupName: themeUserScriptGroupName,
+    source: themeSyncJavaScript(colorModeForBrightness(brightness)),
+    injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START,
+  );
+}
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-  SystemChrome.setSystemUIOverlayStyle(_systemUiOverlayStyle);
+  SystemChrome.setSystemUIOverlayStyle(
+    _systemUiOverlayStyleFor(
+      WidgetsBinding.instance.platformDispatcher.platformBrightness,
+    ),
+  );
 
   Uri? launchLink;
   try {
@@ -66,13 +100,22 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: _startupBackgroundColor,
-        colorScheme: const ColorScheme.dark(
-          surface: _startupBackgroundColor,
-          primary: _startupForegroundColor,
+        brightness: Brightness.light,
+        scaffoldBackgroundColor: _lightBackgroundColor,
+        colorScheme: const ColorScheme.light(
+          surface: _lightBackgroundColor,
+          primary: _lightForegroundColor,
         ),
       ),
+      darkTheme: ThemeData(
+        brightness: Brightness.dark,
+        scaffoldBackgroundColor: _darkBackgroundColor,
+        colorScheme: const ColorScheme.dark(
+          surface: _darkBackgroundColor,
+          primary: _darkForegroundColor,
+        ),
+      ),
+      themeMode: ThemeMode.system,
       home: WebViewPage(initialUrl: initialUrl),
     );
   }
@@ -107,7 +150,7 @@ class WebPermissionResult {
   final String? permissionName;
 }
 
-class _WebViewPageState extends State<WebViewPage> {
+class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
   late final WebUri _initialUrl;
   final WebUri _blankUrl = WebUri("about:blank");
   final AppLinks _appLinks = AppLinks();
@@ -132,6 +175,7 @@ class _WebViewPageState extends State<WebViewPage> {
   bool _showGoogleSignInLoading = false;
   bool _pendingGoogleCallbackNavigation = false;
   bool _isDownloadInProgress = false;
+  UnmodifiableListView<UserScript>? _initialThemeUserScripts;
 
   @override
   void initState() {
@@ -139,6 +183,8 @@ class _WebViewPageState extends State<WebViewPage> {
 
     _initialUrl = widget.initialUrl ?? WebUri(UltraGptUrls.defaultChatUrl);
     currentMainFrameUrl = _initialUrl;
+
+    WidgetsBinding.instance.addObserver(this);
 
     connectivitySubscription = Connectivity().onConnectivityChanged.listen((
       results,
@@ -158,9 +204,18 @@ class _WebViewPageState extends State<WebViewPage> {
   @override
   void dispose() {
     pageLoadGeneration++;
+    WidgetsBinding.instance.removeObserver(this);
     connectivitySubscription.cancel();
     appLinkSubscription?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangePlatformBrightness() {
+    final brightness =
+        WidgetsBinding.instance.platformDispatcher.platformBrightness;
+    SystemChrome.setSystemUIOverlayStyle(_systemUiOverlayStyleFor(brightness));
+    unawaited(_syncWebViewTheme(brightness, updateNativeSettings: true));
   }
 
   void _onIncomingAppLink(Uri uri) {
@@ -197,10 +252,49 @@ class _WebViewPageState extends State<WebViewPage> {
     }
   }
 
+  Future<void> _syncWebViewTheme(
+    Brightness brightness, {
+    bool updateNativeSettings = false,
+  }) async {
+    final controller = webViewController;
+    if (controller == null) return;
+
+    final script = themeSyncJavaScript(colorModeForBrightness(brightness));
+
+    try {
+      if (updateNativeSettings) {
+        await controller.removeUserScriptsByGroupName(
+          groupName: themeUserScriptGroupName,
+        );
+        await controller.addUserScript(
+          userScript: _themeUserScript(brightness),
+        );
+        await controller.setSettings(
+          settings: InAppWebViewSettings(
+            underPageBackgroundColor: _backgroundColorFor(brightness),
+            forceDark: ForceDark.OFF,
+            algorithmicDarkeningAllowed: false,
+          ),
+        );
+      }
+      await controller.evaluateJavascript(source: script);
+    } catch (_) {
+      // Theme sync is best-effort and should not block page load.
+    }
+  }
+
+  Brightness get _platformBrightness {
+    return WidgetsBinding.instance.platformDispatcher.platformBrightness;
+  }
+
   @override
   Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+    final backgroundColor = _backgroundColorFor(brightness);
+    final foregroundColor = _foregroundColorFor(brightness);
+
     return AnnotatedRegion<SystemUiOverlayStyle>(
-      value: _systemUiOverlayStyle,
+      value: _systemUiOverlayStyleFor(brightness),
       child: PopScope(
         canPop: false,
         onPopInvokedWithResult: (didPop, result) async {
@@ -214,14 +308,19 @@ class _WebViewPageState extends State<WebViewPage> {
           }
         },
         child: Scaffold(
-          backgroundColor: _startupBackgroundColor,
+          backgroundColor: backgroundColor,
           resizeToAvoidBottomInset: true,
           body: SafeArea(
             child: Stack(
               children: [
-                _buildWebView(),
+                _buildWebView(brightness, backgroundColor, foregroundColor),
                 if (pageLoadFailed)
-                  Positioned.fill(child: _buildNoInternetView()),
+                  Positioned.fill(
+                    child: _buildNoInternetView(
+                      backgroundColor: backgroundColor,
+                      foregroundColor: foregroundColor,
+                    ),
+                  ),
               ],
             ),
           ),
@@ -230,7 +329,14 @@ class _WebViewPageState extends State<WebViewPage> {
     );
   }
 
-  Widget _buildWebView() {
+  Widget _buildWebView(
+    Brightness brightness,
+    Color backgroundColor,
+    Color foregroundColor,
+  ) {
+    final initialThemeUserScripts = _initialThemeUserScripts ??=
+        UnmodifiableListView<UserScript>([_themeUserScript(brightness)]);
+
     return Stack(
       children: [
         AbsorbPointer(
@@ -262,8 +368,11 @@ class _WebViewPageState extends State<WebViewPage> {
               safeBrowsingEnabled: true,
               disableDefaultErrorPage: true,
               transparentBackground: false,
-              underPageBackgroundColor: _startupBackgroundColor,
+              underPageBackgroundColor: backgroundColor,
+              forceDark: ForceDark.OFF,
+              algorithmicDarkeningAllowed: false,
             ),
+            initialUserScripts: initialThemeUserScripts,
             onWebViewCreated: (controller) {
               webViewController = controller;
               try {
@@ -378,6 +487,7 @@ class _WebViewPageState extends State<WebViewPage> {
             onLoadStart: (_, url) {
               pageLoadGeneration++;
               _isWaitingForReveal = false;
+              unawaited(_syncWebViewTheme(_platformBrightness));
 
               if (_isBlankUrl(url) && pageLoadFailed) {
                 setState(() {
@@ -402,6 +512,7 @@ class _WebViewPageState extends State<WebViewPage> {
             onLoadStop: (controller, url) {
               unawaited(_installShareBridge(controller));
               unawaited(_installDownloadBridge(controller));
+              unawaited(_syncWebViewTheme(_platformBrightness));
 
               if (pageLoadFailed) {
                 setState(() {
@@ -476,12 +587,13 @@ class _WebViewPageState extends State<WebViewPage> {
           LinearProgressIndicator(
             value: pageProgress > 0 ? pageProgress / 100 : null,
             minHeight: 3,
-            color: _startupForegroundColor,
-            backgroundColor: _startupForegroundColor.withValues(alpha: 0.12),
+            color: foregroundColor,
+            backgroundColor: foregroundColor.withValues(alpha: 0.12),
           ),
         if (showStartupOverlay && !pageLoadFailed)
           _StartupLoadingView(
             visible: isInitialLoading,
+            backgroundColor: backgroundColor,
             onHidden: () {
               if (!mounted || isInitialLoading) return;
 
@@ -491,7 +603,9 @@ class _WebViewPageState extends State<WebViewPage> {
             },
           ),
         if (_showGoogleSignInLoading)
-          const Positioned.fill(child: _GoogleSignInBlockingSpinner()),
+          Positioned.fill(
+            child: _GoogleSignInBlockingSpinner(color: foregroundColor),
+          ),
       ],
     );
   }
@@ -1068,7 +1182,12 @@ class _WebViewPageState extends State<WebViewPage> {
     final controller = webViewController;
     if (controller != null) {
       await controller.setSettings(
-        settings: InAppWebViewSettings(cacheMode: CacheMode.LOAD_DEFAULT),
+        settings: InAppWebViewSettings(
+          cacheMode: CacheMode.LOAD_DEFAULT,
+          underPageBackgroundColor: _backgroundColorFor(_platformBrightness),
+          forceDark: ForceDark.OFF,
+          algorithmicDarkeningAllowed: false,
+        ),
       );
       await controller.loadUrl(
         urlRequest: URLRequest(url: currentMainFrameUrl ?? _initialUrl),
@@ -1110,21 +1229,21 @@ class _WebViewPageState extends State<WebViewPage> {
     }
   }
 
-  Widget _buildNoInternetView() {
+  Widget _buildNoInternetView({
+    required Color backgroundColor,
+    required Color foregroundColor,
+  }) {
     return ColoredBox(
-      color: _startupBackgroundColor,
+      color: backgroundColor,
       child: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(_failureIcon, size: 64, color: _startupForegroundColor),
+            Icon(_failureIcon, size: 64, color: foregroundColor),
             const SizedBox(height: 16),
             Text(
               _failureMessage,
-              style: const TextStyle(
-                fontSize: 18,
-                color: _startupForegroundColor,
-              ),
+              style: TextStyle(fontSize: 18, color: foregroundColor),
             ),
             const SizedBox(height: 20),
             FilledButton(onPressed: _retryLoad, child: const Text("Retry")),
@@ -1136,9 +1255,14 @@ class _WebViewPageState extends State<WebViewPage> {
 }
 
 class _StartupLoadingView extends StatelessWidget {
-  const _StartupLoadingView({required this.visible, required this.onHidden});
+  const _StartupLoadingView({
+    required this.visible,
+    required this.backgroundColor,
+    required this.onHidden,
+  });
 
   final bool visible;
+  final Color backgroundColor;
   final VoidCallback onHidden;
 
   @override
@@ -1148,9 +1272,9 @@ class _StartupLoadingView extends StatelessWidget {
       duration: _startupRevealFadeDuration,
       curve: Curves.easeOutCubic,
       onEnd: visible ? null : onHidden,
-      child: const ColoredBox(
-        color: _startupBackgroundColor,
-        child: Center(
+      child: ColoredBox(
+        color: backgroundColor,
+        child: const Center(
           child: ClipOval(
             child: Image(
               image: AssetImage("assets/splash_logo.png"),
@@ -1166,17 +1290,17 @@ class _StartupLoadingView extends StatelessWidget {
 }
 
 class _GoogleSignInBlockingSpinner extends StatelessWidget {
-  const _GoogleSignInBlockingSpinner();
+  const _GoogleSignInBlockingSpinner({required this.color});
+
+  final Color color;
 
   @override
   Widget build(BuildContext context) {
-    return const Stack(
+    return Stack(
       fit: StackFit.expand,
       children: [
-        ModalBarrier(dismissible: false, color: Color(0x99000000)),
-        Center(
-          child: CircularProgressIndicator(color: _startupForegroundColor),
-        ),
+        const ModalBarrier(dismissible: false, color: Color(0x99000000)),
+        Center(child: CircularProgressIndicator(color: color)),
       ],
     );
   }
