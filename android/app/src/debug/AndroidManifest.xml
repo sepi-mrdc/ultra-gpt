@@ -13,7 +13,16 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data
                     android:scheme="https"
-                    android:host="staging-app.ultragpt.pro" />
+                    android:host="staging-app.ultragpt.pro"
+                    android:pathPrefix="/share" />
+                <data
+                    android:scheme="https"
+                    android:host="staging-app.ultragpt.pro"
+                    android:pathPattern="/../share" />
+                <data
+                    android:scheme="https"
+                    android:host="staging-app.ultragpt.pro"
+                    android:pathPattern="/../share/.*" />
             </intent-filter>
         </activity>
     </application>

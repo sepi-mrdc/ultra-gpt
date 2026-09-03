@@ -140,8 +140,9 @@ class UltraGptUrls {
     return resolveIncomingShare(uri);
   }
 
+  /// Cold-start destination: only conversation share links override chat.
   static Uri startUri({Uri? incoming}) {
     if (incoming == null) return defaultChatUri;
-    return resolveIncomingAppUrl(incoming) ?? defaultChatUri;
+    return resolveIncomingShare(incoming) ?? defaultChatUri;
   }
 }

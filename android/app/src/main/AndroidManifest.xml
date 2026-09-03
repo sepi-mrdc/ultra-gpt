@@ -38,13 +38,23 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- HTTPS App Links: verified share URLs only. Other site/auth URLs stay in the browser. -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data
                     android:scheme="https"
-                    android:host="app.ultragpt.pro" />
+                    android:host="app.ultragpt.pro"
+                    android:pathPrefix="/share" />
+                <data
+                    android:scheme="https"
+                    android:host="app.ultragpt.pro"
+                    android:pathPattern="/../share" />
+                <data
+                    android:scheme="https"
+                    android:host="app.ultragpt.pro"
+                    android:pathPattern="/../share/.*" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />

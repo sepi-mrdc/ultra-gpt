@@ -221,7 +221,7 @@ class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
   }
 
   void _onIncomingAppLink(Uri uri) {
-    final resolved = UltraGptUrls.resolveIncomingAppUrl(uri);
+    final resolved = UltraGptUrls.resolveIncomingShare(uri);
     if (resolved == null) return;
 
     final nextUrl = WebUri(resolved.toString());

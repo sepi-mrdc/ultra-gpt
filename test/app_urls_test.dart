@@ -30,6 +30,22 @@ void main() {
         isFalse,
       );
       expect(
+        UltraGptUrls.isShareHttpUrl(Uri.parse("https://app.ultragpt.pro/")),
+        isFalse,
+      );
+      expect(
+        UltraGptUrls.isShareHttpUrl(
+          Uri.parse("https://app.ultragpt.pro/en/auth/callback?code=123"),
+        ),
+        isFalse,
+      );
+      expect(
+        UltraGptUrls.isShareHttpUrl(
+          Uri.parse("https://app.ultragpt.pro/login"),
+        ),
+        isFalse,
+      );
+      expect(
         UltraGptUrls.isShareHttpUrl(
           Uri.parse("https://staging-app.ultragpt.pro/share/abc"),
         ),
@@ -49,6 +65,18 @@ void main() {
           Uri.parse("https://staging-app.ultragpt.pro/share/abc-123"),
         )?.toString(),
         "https://staging-app.ultragpt.pro/share/abc-123",
+      );
+      expect(
+        UltraGptUrls.resolveIncomingShare(
+          Uri.parse("https://app.ultragpt.pro/en/chat"),
+        ),
+        isNull,
+      );
+      expect(
+        UltraGptUrls.resolveIncomingShare(
+          Uri.parse("https://app.ultragpt.pro/en/auth/callback?code=123"),
+        ),
+        isNull,
       );
     });
 
@@ -151,11 +179,23 @@ void main() {
       );
     });
 
-    test("starts on chat unless the incoming link is an UltraGPT URL", () {
+    test("starts on chat unless the incoming link is a share URL", () {
       expect(UltraGptUrls.startUri().toString(), UltraGptUrls.defaultChatUrl);
       expect(
         UltraGptUrls.startUri(
           incoming: Uri.parse("https://example.com"),
+        ).toString(),
+        UltraGptUrls.defaultChatUrl,
+      );
+      expect(
+        UltraGptUrls.startUri(
+          incoming: Uri.parse("https://app.ultragpt.pro/"),
+        ).toString(),
+        UltraGptUrls.defaultChatUrl,
+      );
+      expect(
+        UltraGptUrls.startUri(
+          incoming: Uri.parse("https://app.ultragpt.pro/en/chat"),
         ).toString(),
         UltraGptUrls.defaultChatUrl,
       );
@@ -167,9 +207,21 @@ void main() {
       );
       expect(
         UltraGptUrls.startUri(
+          incoming: Uri.parse("https://app.ultragpt.pro/share/ready"),
+        ).toString(),
+        "https://app.ultragpt.pro/share/ready",
+      );
+      expect(
+        UltraGptUrls.startUri(
           incoming: Uri.parse("https://staging-app.ultragpt.pro/share/ready"),
         ).toString(),
         "https://staging-app.ultragpt.pro/share/ready",
+      );
+      expect(
+        UltraGptUrls.startUri(
+          incoming: Uri.parse("ultragpt://share/abc-123"),
+        ).toString(),
+        "https://app.ultragpt.pro/en/share/abc-123",
       );
       expect(
         UltraGptUrls.startUri(
@@ -177,7 +229,7 @@ void main() {
             "https://app.ultragpt.pro/en/auth/callback?code=123",
           ),
         ).toString(),
-        "https://app.ultragpt.pro/en/auth/callback?code=123",
+        UltraGptUrls.defaultChatUrl,
       );
     });
   });
