@@ -10,12 +10,11 @@ pluginManagement {
     includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
 
     repositories {
+        google()
         // Google Maven is blocked on this network; use public mirrors first.
-        maven("https://maven.aliyun.com/repository/google")
         maven("https://maven.aliyun.com/repository/central")
         maven("https://maven.aliyun.com/repository/gradle-plugin")
         maven("https://repo.huaweicloud.com/repository/maven")
-        google()
         mavenCentral()
         gradlePluginPortal()
     }
