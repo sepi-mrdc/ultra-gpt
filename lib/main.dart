@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:collection';
 
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
@@ -13,6 +15,7 @@ import 'app_urls.dart';
 import 'download_bridge.dart';
 import 'download_service.dart';
 import 'google_auth.dart';
+import 'push_notifications.dart';
 import 'theme_bridge.dart';
 import 'web_share_bridge.dart';
 
@@ -67,6 +70,15 @@ UserScript _themeUserScript(Brightness brightness) {
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  Uri? notificationLaunchUrl;
+  if (isAndroidPushSupported) {
+    await Firebase.initializeApp();
+    FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+    await UltraGptPushNotifications.instance.initialize();
+    notificationLaunchUrl = UltraGptPushNotifications.instance
+        .consumePendingUrl();
+  }
+
   await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   SystemChrome.setSystemUIOverlayStyle(
     _systemUiOverlayStyleFor(
@@ -83,13 +95,10 @@ Future<void> main() async {
 
   unawaited(UltraGptGoogleAuth().warmUp());
 
-  runApp(
-    MyApp(
-      initialUrl: WebUri(
-        UltraGptUrls.startUri(incoming: launchLink).toString(),
-      ),
-    ),
-  );
+  final startUri =
+      notificationLaunchUrl ?? UltraGptUrls.startUri(incoming: launchLink);
+
+  runApp(MyApp(initialUrl: WebUri(startUri.toString())));
 }
 
 class MyApp extends StatelessWidget {
@@ -200,6 +209,8 @@ class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
 
     appLinkSubscription = _appLinks.uriLinkStream.listen(_onIncomingAppLink);
 
+    UltraGptPushNotifications.instance.setOpenUrlHandler(_openNotificationUrl);
+    unawaited(_syncPushRegistration());
     unawaited(_googleAuth.warmUp());
   }
 
@@ -207,9 +218,17 @@ class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
   void dispose() {
     pageLoadGeneration++;
     WidgetsBinding.instance.removeObserver(this);
+    UltraGptPushNotifications.instance.setOpenUrlHandler(null);
     connectivitySubscription.cancel();
     appLinkSubscription?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_syncPushRegistration());
+    }
   }
 
   @override
@@ -233,6 +252,23 @@ class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
 
     final controller = webViewController;
     currentMainFrameUrl = nextUrl;
+    if (controller == null) return;
+
+    unawaited(controller.loadUrl(urlRequest: URLRequest(url: nextUrl)));
+  }
+
+  Future<void> _syncPushRegistration() {
+    return UltraGptPushNotifications.instance.syncRegistration(
+      currentUrl: currentMainFrameUrl,
+    );
+  }
+
+  void _openNotificationUrl(Uri uri) {
+    final nextUrl = WebUri(uri.toString());
+    if (nextUrl.toString() == currentMainFrameUrl?.toString()) return;
+
+    currentMainFrameUrl = nextUrl;
+    final controller = webViewController;
     if (controller == null) return;
 
     unawaited(controller.loadUrl(urlRequest: URLRequest(url: nextUrl)));
@@ -515,6 +551,7 @@ class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
               unawaited(_installShareBridge(controller));
               unawaited(_installDownloadBridge(controller));
               unawaited(_syncWebViewTheme(_platformBrightness));
+              unawaited(_syncPushRegistration());
 
               if (pageLoadFailed) {
                 setState(() {
@@ -871,6 +908,7 @@ class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
       _showGoogleSignInLoading = false;
       _pendingGoogleCallbackNavigation = false;
     });
+    unawaited(_syncPushRegistration());
   }
 
   Future<void> _handleWebViewDownload(

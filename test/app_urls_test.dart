@@ -172,6 +172,11 @@ void main() {
         "https://api.ultragpt.pro/auth/google/mobile",
       );
       expect(
+        UltraGptUrls.apiFcmDevicesUri.toString(),
+        "https://api.ultragpt.pro/mobile/devices/fcm",
+      );
+      expect(UltraGptUrls.sessionCookieName, "session-token");
+      expect(
         UltraGptUrls.localeFromAppUrl(
           Uri.parse("https://app.ultragpt.pro/en/chat"),
         ),
@@ -230,6 +235,66 @@ void main() {
           ),
         ).toString(),
         UltraGptUrls.defaultChatUrl,
+      );
+    });
+  });
+
+  group("resolveNotificationUrl", () {
+    test("accepts safe relative UltraGPT paths", () {
+      expect(
+        UltraGptUrls.resolveNotificationUrl(
+          "/en/account/notifications",
+        )?.toString(),
+        "https://app.ultragpt.pro/en/account/notifications",
+      );
+      expect(
+        UltraGptUrls.resolveNotificationUrl(
+          "/en/chat?conversation=abc",
+        )?.toString(),
+        "https://app.ultragpt.pro/en/chat?conversation=abc",
+      );
+      expect(
+        UltraGptUrls.resolveNotificationUrl("  /ru/account/notifications  ")
+            ?.toString(),
+        "https://app.ultragpt.pro/ru/account/notifications",
+      );
+    });
+
+    test("rejects unsafe or absolute notification URLs", () {
+      expect(UltraGptUrls.resolveNotificationUrl(null), isNull);
+      expect(UltraGptUrls.resolveNotificationUrl(""), isNull);
+      expect(UltraGptUrls.resolveNotificationUrl("en/chat"), isNull);
+      expect(
+        UltraGptUrls.resolveNotificationUrl("//evil.example/phish"),
+        isNull,
+      );
+      expect(
+        UltraGptUrls.resolveNotificationUrl("https://evil.example/phish"),
+        isNull,
+      );
+      expect(
+        UltraGptUrls.resolveNotificationUrl("javascript:alert(1)"),
+        isNull,
+      );
+      expect(
+        UltraGptUrls.resolveNotificationUrl("/en/chat /elsewhere"),
+        isNull,
+      );
+      expect(
+        UltraGptUrls.resolveNotificationUrl("/en\\chat"),
+        isNull,
+      );
+      expect(
+        UltraGptUrls.resolveNotificationUrl(
+          "https://app.ultragpt.pro/en/account/notifications",
+        ),
+        isNull,
+      );
+      expect(
+        UltraGptUrls.resolveNotificationUrl(
+          "//app.ultragpt.pro/en/account/notifications",
+        ),
+        isNull,
       );
     });
   });

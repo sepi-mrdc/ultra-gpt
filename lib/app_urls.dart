@@ -8,7 +8,9 @@ class UltraGptUrls {
   static const googleWebClientId =
       "46935507532-e2dh61dg8pn669828g8u8q1f2crrc26s.apps.googleusercontent.com";
   static const googleAuthHost = "accounts.google.com";
+  static const sessionCookieName = "session-token";
   static const _defaultShareLocale = "en";
+  static final _controlOrWhitespace = RegExp(r"[\x00-\x1f\x7f\s\\]");
   static final _authCallbackPathPattern = RegExp(
     r"^/(?:[a-z]{2}/)?auth/callback/?$",
     caseSensitive: false,
@@ -65,6 +67,43 @@ class UltraGptUrls {
       host: apiHost,
       path: "/auth/google/mobile",
     );
+  }
+
+  static Uri get apiFcmDevicesUri {
+    return Uri(
+      scheme: "https",
+      host: apiHost,
+      path: "/mobile/devices/fcm",
+    );
+  }
+
+  /// Maps a push `data.url` value to an UltraGPT page. Only relative paths on
+  /// the app host are accepted (`/en/account/notifications`). Protocol-relative
+  /// URLs, schemes, backslashes, and off-host resolutions are rejected.
+  static Uri? resolveNotificationUrl(String? raw) {
+    if (raw == null) return null;
+
+    final value = raw.trim();
+    if (value.isEmpty) return null;
+    if (!value.startsWith("/")) return null;
+    if (value.startsWith("//")) return null;
+    if (value.contains("://")) return null;
+    if (_controlOrWhitespace.hasMatch(value)) return null;
+
+    final relative = Uri.tryParse(value);
+    if (relative == null) return null;
+    if (relative.hasScheme || relative.hasAuthority) return null;
+
+    final resolved = Uri(
+      scheme: "https",
+      host: host,
+    ).resolveUri(relative).replace(scheme: "https");
+
+    if (!isAppHttpUrl(resolved)) return null;
+    if (resolved.userInfo.isNotEmpty) return null;
+    if (resolved.host.toLowerCase() != host) return null;
+
+    return resolved;
   }
 
   static String? localeFromAppUrl(Uri uri) {
