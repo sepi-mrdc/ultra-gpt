@@ -3,6 +3,10 @@ import 'package:ultragpt3/app_urls.dart';
 
 void main() {
   test('opens chat unless a share link launched the app', () {
+    expect(
+      UltraGptUrls.startUri().toString(),
+      'https://app.ultragpt.pro/?client=android',
+    );
     expect(UltraGptUrls.startUri().toString(), UltraGptUrls.defaultChatUrl);
     expect(
       UltraGptUrls.startUri(

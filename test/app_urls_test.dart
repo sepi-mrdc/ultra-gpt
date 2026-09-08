@@ -184,7 +184,44 @@ void main() {
       );
     });
 
+    test("identifies the Android WebView without duplicating or leaking off-host", () {
+      expect(
+        UltraGptUrls.withAndroidClient(
+          Uri.parse("https://app.ultragpt.pro/"),
+        ).toString(),
+        "https://app.ultragpt.pro/?client=android",
+      );
+      expect(
+        UltraGptUrls.withAndroidClient(
+          Uri.parse("https://app.ultragpt.pro/?client=android"),
+        ).toString(),
+        "https://app.ultragpt.pro/?client=android",
+      );
+      expect(
+        UltraGptUrls.withAndroidClient(
+          Uri.parse("https://app.ultragpt.pro/en/chat?conversation=abc"),
+        ).toString(),
+        "https://app.ultragpt.pro/en/chat?conversation=abc&client=android",
+      );
+      expect(
+        UltraGptUrls.withAndroidClient(
+          Uri.parse("https://example.com/"),
+        ).toString(),
+        "https://example.com/",
+      );
+      expect(
+        UltraGptUrls.withAndroidClient(
+          Uri.parse("https://accounts.google.com/o/oauth2/v2/auth"),
+        ).toString(),
+        "https://accounts.google.com/o/oauth2/v2/auth",
+      );
+    });
+
     test("starts on chat unless the incoming link is a share URL", () {
+      expect(
+        UltraGptUrls.startUri().toString(),
+        "https://app.ultragpt.pro/?client=android",
+      );
       expect(UltraGptUrls.startUri().toString(), UltraGptUrls.defaultChatUrl);
       expect(
         UltraGptUrls.startUri(

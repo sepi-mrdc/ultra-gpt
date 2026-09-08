@@ -4,7 +4,9 @@ class UltraGptUrls {
   static const apiHost = "api.ultragpt.pro";
   static const shareHosts = {host, stagingHost};
   static const customScheme = "ultragpt";
-  static const defaultChatUrl = "https://$host/en/chat";
+  static const androidClientQueryName = "client";
+  static const androidClientQueryValue = "android";
+  static const defaultChatUrl = "https://$host/?client=android";
   static const googleWebClientId =
       "46935507532-e2dh61dg8pn669828g8u8q1f2crrc26s.apps.googleusercontent.com";
   static const googleAuthHost = "accounts.google.com";
@@ -21,7 +23,21 @@ class UltraGptUrls {
     caseSensitive: false,
   );
 
-  static Uri get defaultChatUri => Uri.parse(defaultChatUrl);
+  static Uri get defaultChatUri => withAndroidClient(Uri.parse(defaultChatUrl));
+
+  /// Identifies the Android WebView to UltraGPT. Leaves external URLs and
+  /// URLs that already have `client` unchanged.
+  static Uri withAndroidClient(Uri uri) {
+    if (!isAppHttpUrl(uri)) return uri;
+    if (uri.queryParameters.containsKey(androidClientQueryName)) return uri;
+
+    return uri.replace(
+      queryParameters: {
+        ...uri.queryParameters,
+        androidClientQueryName: androidClientQueryValue,
+      },
+    );
+  }
 
   static bool isSharePath(String path) => _sharePathPattern.hasMatch(path);
 
