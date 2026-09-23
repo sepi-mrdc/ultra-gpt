@@ -113,10 +113,7 @@ class UltraGptGoogleAuth {
 
   Future<GoogleSignInAccount?> _interactiveSignIn() async {
     // Server auth codes are one-time. signOut() drops the cached account so
-    // signIn() requests a new code. Without forceCodeForRefreshToken,
-    // /auth/google/mobile rejects the code with INVALID_GOOGLE_IDENTITY.
-    // disconnect() is avoided: revoking the grant on every sign-in led to
-    // HTTP 429 from the same endpoint.
+    // signIn() requests a new code.
     await _clearNativeGoogleSession();
     return _googleSignIn.signIn();
   }
