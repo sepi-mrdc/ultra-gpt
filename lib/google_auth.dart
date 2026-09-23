@@ -56,7 +56,6 @@ class UltraGptGoogleAuth {
           GoogleSignIn(
             scopes: const ["email", "profile"],
             serverClientId: UltraGptUrls.googleWebClientId,
-            forceCodeForRefreshToken: true,
           );
 
   static final UltraGptGoogleAuth _instance = UltraGptGoogleAuth._();
@@ -103,22 +102,18 @@ class UltraGptGoogleAuth {
   }
 
   Future<GoogleSignInAccount?> _interactiveSignIn() async {
-    // Google server auth codes are one-time. After UltraGPT logout, the native
-    // plugin still holds the previous account and already-exchanged code, so
-    // signIn() would reuse it and /auth/google/mobile returns HTTP 401.
+    // Server auth codes are one-time. signOut() drops the cached account so
+    // signIn() requests a new code. disconnect() revokes the grant and, with
+    // a forced refresh token, makes /auth/google/mobile return HTTP 429.
     await _clearNativeGoogleSession();
     return _googleSignIn.signIn();
   }
 
   Future<void> _clearNativeGoogleSession() async {
     try {
-      await _googleSignIn.disconnect();
+      await _googleSignIn.signOut();
     } catch (_) {
-      try {
-        await _googleSignIn.signOut();
-      } catch (_) {
-        // Best-effort reset before requesting a new serverAuthCode.
-      }
+      // Best-effort reset before requesting a new serverAuthCode.
     }
   }
 
