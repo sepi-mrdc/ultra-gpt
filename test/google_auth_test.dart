@@ -57,6 +57,31 @@ void main() {
       );
     });
 
+    test("includes the backend error code and request ID", () async {
+      final client = MockClient((request) async {
+        return http.Response(
+          jsonEncode({
+            "code": "RATE_LIMITED",
+            "message": "Too many requests.",
+            "requestId": "req-42",
+          }),
+          429,
+        );
+      });
+
+      expect(
+        () => resolveAppCallbackFromApiCode("abc123", client: client),
+        throwsA(
+          isA<GoogleAuthException>().having(
+            (error) => error.message,
+            "message",
+            "UltraGPT could not complete Google sign-in "
+                "(HTTP 429, RATE_LIMITED). Request ID: req-42",
+          ),
+        ),
+      );
+    });
+
     test("throws when callbackUrl is missing", () async {
       final client = MockClient((request) async {
         return http.Response(

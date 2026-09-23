@@ -18,9 +18,18 @@ class GoogleAuthException implements Exception {
     );
   }
 
-  factory GoogleAuthException.exchangeFailed(int statusCode) {
+  factory GoogleAuthException.exchangeFailed(
+    int statusCode, {
+    String? errorCode,
+    String? requestId,
+  }) {
+    final details = [
+      "HTTP $statusCode",
+      if (errorCode != null) errorCode,
+    ].join(", ");
+    final reference = requestId == null ? "" : " Request ID: $requestId";
     return GoogleAuthException(
-      "UltraGPT could not complete Google sign-in (HTTP $statusCode).",
+      "UltraGPT could not complete Google sign-in ($details).$reference",
     );
   }
 
@@ -56,6 +65,7 @@ class UltraGptGoogleAuth {
           GoogleSignIn(
             scopes: const ["email", "profile"],
             serverClientId: UltraGptUrls.googleWebClientId,
+            forceCodeForRefreshToken: true,
           );
 
   static final UltraGptGoogleAuth _instance = UltraGptGoogleAuth._();
@@ -103,8 +113,10 @@ class UltraGptGoogleAuth {
 
   Future<GoogleSignInAccount?> _interactiveSignIn() async {
     // Server auth codes are one-time. signOut() drops the cached account so
-    // signIn() requests a new code. disconnect() revokes the grant and, with
-    // a forced refresh token, makes /auth/google/mobile return HTTP 429.
+    // signIn() requests a new code. Without forceCodeForRefreshToken,
+    // /auth/google/mobile rejects the code with INVALID_GOOGLE_IDENTITY.
+    // disconnect() is avoided: revoking the grant on every sign-in led to
+    // HTTP 429 from the same endpoint.
     await _clearNativeGoogleSession();
     return _googleSignIn.signIn();
   }
@@ -149,7 +161,12 @@ Future<Uri> resolveAppCallbackFromApiCode(
         .timeout(const Duration(seconds: 30));
 
     if (response.statusCode != 200) {
-      throw GoogleAuthException.exchangeFailed(response.statusCode);
+      final error = _decodeErrorBody(response.body);
+      throw GoogleAuthException.exchangeFailed(
+        response.statusCode,
+        errorCode: error["code"],
+        requestId: error["requestId"],
+      );
     }
 
     final decoded = jsonDecode(response.body);
@@ -189,5 +206,19 @@ Future<Uri> resolveAppCallbackFromApiCode(
     if (shouldCloseClient) {
       httpClient.close();
     }
+  }
+}
+
+Map<String, String> _decodeErrorBody(String body) {
+  try {
+    final decoded = jsonDecode(body);
+    if (decoded is! Map) return const {};
+    return {
+      for (final key in const ["code", "requestId"])
+        if (decoded[key] is String && (decoded[key] as String).isNotEmpty)
+          key: decoded[key] as String,
+    };
+  } on FormatException {
+    return const {};
   }
 }
