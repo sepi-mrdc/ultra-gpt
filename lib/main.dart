@@ -16,6 +16,7 @@ import 'download_bridge.dart';
 import 'download_service.dart';
 import 'google_auth.dart';
 import 'push_notifications.dart';
+import 'startup_load.dart';
 import 'theme_bridge.dart';
 import 'web_share_bridge.dart';
 
@@ -187,6 +188,9 @@ class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
   bool _pendingGoogleCallbackNavigation = false;
   bool _isDownloadInProgress = false;
   UnmodifiableListView<UserScript>? _initialThemeUserScripts;
+  final StartupLoadCoordinator _startupLoad = StartupLoadCoordinator();
+  Timer? _startupRecoverTimer;
+  Timer? _startupGiveUpTimer;
 
   @override
   void initState() {
@@ -210,13 +214,19 @@ class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
     appLinkSubscription = _appLinks.uriLinkStream.listen(_onIncomingAppLink);
 
     UltraGptPushNotifications.instance.setOpenUrlHandler(_openNotificationUrl);
-    unawaited(_syncPushRegistration());
     unawaited(_googleAuth.warmUp());
+    _startupRecoverTimer = Timer(startupRecoverTimeout, () {
+      unawaited(_runStartupWatchdog(isFinalChance: false));
+    });
+    _startupGiveUpTimer = Timer(startupGiveUpTimeout, () {
+      unawaited(_runStartupWatchdog(isFinalChance: true));
+    });
   }
 
   @override
   void dispose() {
     pageLoadGeneration++;
+    _cancelStartupWatchdogs();
     WidgetsBinding.instance.removeObserver(this);
     UltraGptPushNotifications.instance.setOpenUrlHandler(null);
     connectivitySubscription.cancel();
@@ -226,7 +236,7 @@ class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
+    if (state == AppLifecycleState.resumed && hasLoadedInitialPage) {
       unawaited(_syncPushRegistration());
     }
   }
@@ -261,6 +271,143 @@ class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
     return UltraGptPushNotifications.instance.syncRegistration(
       currentUrl: currentMainFrameUrl,
     );
+  }
+
+  void _cancelStartupWatchdogs() {
+    _startupRecoverTimer?.cancel();
+    _startupGiveUpTimer?.cancel();
+    _startupRecoverTimer = null;
+    _startupGiveUpTimer = null;
+  }
+
+  bool get _startupLoadHasStarted {
+    return pageLoadGeneration > 0 || pageProgress > 0;
+  }
+
+  Future<void> _runStartupWatchdog({required bool isFinalChance}) async {
+    if (!mounted || hasLoadedInitialPage || pageLoadFailed) return;
+
+    final controller = webViewController;
+    var pageLooksReady = false;
+    if (controller != null) {
+      pageLooksReady = await _isPageVisuallyReady(controller);
+    }
+
+    if (!mounted || hasLoadedInitialPage || pageLoadFailed) return;
+
+    final action = _startupLoad.decideWatchdog(
+      alreadyRevealed: hasLoadedInitialPage,
+      pageLooksReady: pageLooksReady,
+      loadHasStarted: _startupLoadHasStarted,
+      isFinalChance: isFinalChance,
+    );
+
+    switch (action) {
+      case StartupWatchdogAction.none:
+        return;
+      case StartupWatchdogAction.reveal:
+        _applyInitialPageRevealed(pageProgress: 100);
+        return;
+      case StartupWatchdogAction.recoverByClearingCache:
+        if (controller == null) {
+          _startupLoad.didCacheRecovery = false;
+          return;
+        }
+        await _recoverStuckStartup(controller);
+        if (isFinalChance && mounted && !hasLoadedInitialPage && !pageLoadFailed) {
+          _scheduleStartupReloadWatchdog();
+        }
+        return;
+      case StartupWatchdogAction.reload:
+        if (controller == null) return;
+        await _reloadCurrentUrl(controller);
+        if (mounted && !hasLoadedInitialPage && !pageLoadFailed) {
+          _scheduleStartupReloadWatchdog();
+        }
+        return;
+    }
+  }
+
+  Future<void> _recoverStuckStartup(InAppWebViewController? controller) async {
+    if (controller == null || !mounted) return;
+
+    try {
+      await controller
+          .evaluateJavascript(source: recoverStuckStartupJavaScript)
+          .timeout(const Duration(seconds: 2), onTimeout: () => null);
+    } catch (_) {}
+
+    try {
+      await InAppWebViewController.clearAllCache().timeout(
+        const Duration(seconds: 3),
+        onTimeout: () {},
+      );
+    } catch (_) {}
+
+    if (!mounted || hasLoadedInitialPage || pageLoadFailed) return;
+
+    _isWaitingForReveal = false;
+
+    try {
+      await controller.setSettings(
+        settings: InAppWebViewSettings(
+          cacheMode: CacheMode.LOAD_NO_CACHE,
+          underPageBackgroundColor: _backgroundColorFor(_platformBrightness),
+          forceDark: ForceDark.OFF,
+          algorithmicDarkeningAllowed: false,
+        ),
+      );
+      await controller.loadUrl(
+        urlRequest: URLRequest(url: currentMainFrameUrl ?? _initialUrl),
+      );
+    } catch (_) {
+      // Stay on the existing splash and let the watchdog try again.
+    }
+  }
+
+  void _scheduleStartupReloadWatchdog() {
+    _startupGiveUpTimer?.cancel();
+    _startupGiveUpTimer = Timer(startupPostRecoverTimeout, () {
+      unawaited(_runStartupWatchdog(isFinalChance: true));
+    });
+  }
+
+  Future<void> _reloadCurrentUrl(InAppWebViewController controller) async {
+    try {
+      await controller.loadUrl(
+        urlRequest: URLRequest(url: currentMainFrameUrl ?? _initialUrl),
+      );
+    } catch (_) {}
+  }
+
+  void _applyInitialPageRevealed({int? pageProgress}) {
+    _cancelStartupWatchdogs();
+    if (!mounted || hasLoadedInitialPage) return;
+
+    setState(() {
+      hasLoadedInitialPage = true;
+      isInitialLoading = false;
+      isNavigating = false;
+      this.pageProgress = pageProgress ?? this.pageProgress;
+      pageLoadFailed = false;
+    });
+    unawaited(_restoreDefaultCacheMode());
+  }
+
+  Future<void> _restoreDefaultCacheMode() async {
+    final controller = webViewController;
+    if (controller == null) return;
+
+    try {
+      await controller.setSettings(
+        settings: InAppWebViewSettings(
+          cacheMode: CacheMode.LOAD_DEFAULT,
+          underPageBackgroundColor: _backgroundColorFor(_platformBrightness),
+          forceDark: ForceDark.OFF,
+          algorithmicDarkeningAllowed: false,
+        ),
+      );
+    } catch (_) {}
   }
 
   void _openNotificationUrl(Uri uri) {
@@ -672,16 +819,20 @@ class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
         return;
       }
 
-      setState(() {
-        hasLoadedInitialPage = true;
-        isInitialLoading = false;
-        isNavigating = false;
-        pageProgress = isReady ? 100 : pageProgress;
-        pageLoadFailed = false;
-      });
+      _applyInitialPageRevealed(pageProgress: isReady ? 100 : pageProgress);
     } finally {
       if (loadGeneration == pageLoadGeneration) {
         _isWaitingForReveal = false;
+      } else if (mounted &&
+          !hasLoadedInitialPage &&
+          !pageLoadFailed &&
+          !_isWaitingForReveal) {
+        final currentController = webViewController;
+        if (currentController != null) {
+          unawaited(
+            _revealInitialPageWhenReady(currentController, pageLoadGeneration),
+          );
+        }
       }
     }
   }
@@ -1195,6 +1346,7 @@ class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
   }
 
   void _showLoadFailure(PageLoadFailureKind kind, {WebUri? failedUrl}) {
+    _cancelStartupWatchdogs();
     setState(() {
       if (failedUrl != null && !_isBlankUrl(failedUrl)) {
         currentMainFrameUrl = failedUrl;
@@ -1219,11 +1371,33 @@ class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
       pageProgress = 0;
     });
 
+    if (!hasLoadedInitialPage) {
+      _startupLoad.didCacheRecovery = false;
+      _cancelStartupWatchdogs();
+      _startupRecoverTimer = Timer(startupRecoverTimeout, () {
+        unawaited(_runStartupWatchdog(isFinalChance: false));
+      });
+      _startupGiveUpTimer = Timer(startupGiveUpTimeout, () {
+        unawaited(_runStartupWatchdog(isFinalChance: true));
+      });
+    }
+
     final controller = webViewController;
     if (controller != null) {
+      final bypassCache = pageLoadFailureKind == PageLoadFailureKind.timeout;
+      if (bypassCache) {
+        try {
+          await InAppWebViewController.clearAllCache().timeout(
+            const Duration(seconds: 3),
+            onTimeout: () {},
+          );
+        } catch (_) {}
+      }
       await controller.setSettings(
         settings: InAppWebViewSettings(
-          cacheMode: CacheMode.LOAD_DEFAULT,
+          cacheMode: bypassCache
+              ? CacheMode.LOAD_NO_CACHE
+              : CacheMode.LOAD_DEFAULT,
           underPageBackgroundColor: _backgroundColorFor(_platformBrightness),
           forceDark: ForceDark.OFF,
           algorithmicDarkeningAllowed: false,

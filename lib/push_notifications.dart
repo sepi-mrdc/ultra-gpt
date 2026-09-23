@@ -127,10 +127,12 @@ class UltraGptPushNotifications {
 
     for (final origin in origins) {
       try {
-        final cookie = await _cookieManager.getCookie(
-          url: WebUri(origin),
-          name: UltraGptUrls.sessionCookieName,
-        );
+        final cookie = await _cookieManager
+            .getCookie(
+              url: WebUri(origin),
+              name: UltraGptUrls.sessionCookieName,
+            )
+            .timeout(const Duration(seconds: 2), onTimeout: () => null);
         final value = cookie?.value;
         if (value == null) continue;
         final trimmed = value.trim();
